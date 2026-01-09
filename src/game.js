@@ -6,6 +6,219 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function smoothStep(value) {
+  return value * value * (3 - 2 * value);
+}
+
+function hash2d(x, z, seed) {
+  const s = Math.sin(x * 127.1 + z * 311.7 + seed * 74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function valueNoise2d(x, z, seed) {
+  const x0 = Math.floor(x);
+  const z0 = Math.floor(z);
+  const x1 = x0 + 1;
+  const z1 = z0 + 1;
+
+  const sx = smoothStep(x - x0);
+  const sz = smoothStep(z - z0);
+
+  const n00 = hash2d(x0, z0, seed);
+  const n10 = hash2d(x1, z0, seed);
+  const n01 = hash2d(x0, z1, seed);
+  const n11 = hash2d(x1, z1, seed);
+
+  const ix0 = BABYLON.Scalar.Lerp(n00, n10, sx);
+  const ix1 = BABYLON.Scalar.Lerp(n01, n11, sx);
+
+  return BABYLON.Scalar.Lerp(ix0, ix1, sz);
+}
+
+function fbmNoise(x, z, seed, octaves, lacunarity, gain) {
+  let amplitude = 1;
+  let frequency = 1;
+  let sum = 0;
+  let normalization = 0;
+
+  for (let i = 0; i < octaves; i += 1) {
+    sum += valueNoise2d(x * frequency, z * frequency, seed + i * 13) * amplitude;
+    normalization += amplitude;
+    amplitude *= gain;
+    frequency *= lacunarity;
+  }
+
+  return sum / normalization;
+}
+
+function getLandMaskAt(x, z, options) {
+  const radius = options.size * 0.5;
+  const dist = Math.sqrt(x * x + z * z);
+  const radial = smoothStep(clamp((radius - dist) / radius, 0, 1));
+
+  const largeNoise = fbmNoise(
+    (x + options.seedOffset) / options.islandScaleLarge,
+    (z + options.seedOffset) / options.islandScaleLarge,
+    options.seed + 201,
+    3,
+    2.0,
+    0.5
+  );
+  const smallNoise = fbmNoise(
+    (x + options.seedOffset) / options.islandScaleSmall,
+    (z + options.seedOffset) / options.islandScaleSmall,
+    options.seed + 401,
+    2,
+    2.1,
+    0.55
+  );
+
+  const largeMask = smoothStep(
+    clamp((largeNoise - options.largeThreshold) / options.largeFalloff, 0, 1)
+  );
+  const smallMask = smoothStep(
+    clamp((smallNoise - options.smallThreshold) / options.smallFalloff, 0, 1)
+  );
+
+  let islandBase = Math.max(largeMask, smallMask * options.smallWeight);
+
+  const coastNoise = fbmNoise(
+    (x + options.seedOffset) / options.coastScale,
+    (z + options.seedOffset) / options.coastScale,
+    options.seed + 701,
+    3,
+    2.2,
+    0.5
+  );
+  const coastMask = smoothStep(
+    clamp((coastNoise - options.coastThreshold) / options.coastFalloff, 0, 1)
+  );
+  islandBase = clamp(islandBase - (1 - coastMask) * options.coastCut, 0, 1);
+
+  if (options.centerRadius > 0) {
+    const centerMask = smoothStep(
+      clamp(1 - dist / options.centerRadius, 0, 1)
+    );
+    islandBase = Math.max(islandBase, centerMask);
+  }
+
+  return islandBase * radial;
+}
+
+function applyLandmassTerrain(mesh, options) {
+  const positions = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+  const indices = mesh.getIndices();
+  const normals = [];
+  const seed = options.seed;
+
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i];
+    const z = positions[i + 2];
+    const dist = Math.sqrt(x * x + z * z);
+
+    const hillNoise = fbmNoise(
+      (x + options.seedOffset) / options.hillScale,
+      (z + options.seedOffset) / options.hillScale,
+      seed,
+      4,
+      2.1,
+      0.5
+    );
+    let height = (hillNoise - 0.5) * options.hillHeight;
+
+    const mountainNoise = fbmNoise(
+      (x + options.seedOffset) / options.mountainScale,
+      (z + options.seedOffset) / options.mountainScale,
+      seed + 101,
+      3,
+      2.2,
+      0.55
+    );
+    const mountainRidge = Math.max(0, mountainNoise - 0.52);
+    height += mountainRidge * mountainRidge * options.mountainHeight;
+
+    const landMask = getLandMaskAt(x, z, options);
+
+    if (options.flattenCenterRadius > 0) {
+      const flat = clamp(1 - dist / options.flattenCenterRadius, 0, 1);
+      height *= 1 - smoothStep(flat);
+    }
+
+    const landHeight = options.baseHeight + height * landMask;
+    positions[i + 1] = BABYLON.Scalar.Lerp(
+      options.seaFloorHeight,
+      landHeight,
+      landMask
+    );
+  }
+
+  BABYLON.VertexData.ComputeNormals(positions, indices, normals);
+  mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+  mesh.setVerticesData(BABYLON.VertexBuffer.NormalKind, normals);
+  mesh.refreshBoundingInfo();
+}
+
+function createJetAudio(scene, jet) {
+  const audio = new Audio("/wjet-loop.wav");
+  audio.loop = true;
+  audio.volume = 0;
+  audio.preload = "auto";
+
+  let currentVolume = 0;
+  let currentRate = 0.9;
+  let started = false;
+  let isPaused = false;
+
+  const requestStart = () => {
+    if (!started) {
+      started = true;
+      audio.play().catch(() => {
+        started = false;
+      });
+    }
+  };
+
+  window.addEventListener("pointerdown", requestStart, { once: true });
+  window.addEventListener("click", requestStart, { once: true });
+  window.addEventListener("keydown", requestStart, { once: true });
+
+  function update(dt, throttle) {
+    if (isPaused) {
+      return;
+    }
+
+    const targetVolume = BABYLON.Scalar.Lerp(0.0, 0.95, throttle);
+    const targetRate = BABYLON.Scalar.Lerp(0.85, 1.5, throttle);
+    const response = 1 - Math.exp(-dt * 6);
+
+    currentVolume += (targetVolume - currentVolume) * response;
+    currentRate += (targetRate - currentRate) * response;
+
+    audio.volume = currentVolume;
+    audio.playbackRate = currentRate;
+  }
+
+  function setPaused(paused) {
+    if (paused === isPaused) {
+      return;
+    }
+
+    isPaused = paused;
+    if (isPaused) {
+      audio.pause();
+      return;
+    }
+
+    if (started) {
+      audio.play().catch(() => {
+        started = false;
+      });
+    }
+  }
+
+  return { update, setPaused };
+}
+
 function createInputManager() {
   const pressed = new Set();
   const input = {
@@ -18,6 +231,7 @@ function createInputManager() {
     reset: false,
     brakeToggle: false,
     pause: false,
+    autoLevelToggle: false,
   };
 
   window.addEventListener("keydown", (event) => {
@@ -37,6 +251,10 @@ function createInputManager() {
 
     if (event.code === "KeyP" && !event.repeat) {
       input.pause = true;
+    }
+
+    if (event.code === "KeyL" && !event.repeat) {
+      input.autoLevelToggle = true;
     }
   });
 
@@ -79,6 +297,12 @@ function createInputManager() {
     return pause;
   }
 
+  function consumeAutoLevelToggle() {
+    const toggle = input.autoLevelToggle;
+    input.autoLevelToggle = false;
+    return toggle;
+  }
+
   return {
     input,
     updateAxes,
@@ -86,6 +310,7 @@ function createInputManager() {
     consumeReset,
     consumeBrakeToggle,
     consumePause,
+    consumeAutoLevelToggle,
   };
 }
 
@@ -120,26 +345,74 @@ export async function startGame() {
   oceanMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.2);
   ocean.material = oceanMat;
 
-  const islandMat = new BABYLON.StandardMaterial("islandMat", scene);
-  islandMat.diffuseColor = new BABYLON.Color3(0.2, 0.6, 0.25);
-  islandMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+  const grassMat = new BABYLON.StandardMaterial("grassMat", scene);
+  grassMat.diffuseColor = new BABYLON.Color3(0.18, 0.56, 0.22);
+  grassMat.ambientColor = new BABYLON.Color3(0.1, 0.22, 0.12);
+  grassMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
 
-  const islandConfigs = [
-    { name: "island-1", size: 320, x: 0, z: 0 },
-    { name: "island-2", size: 140, x: 320, z: -260 },
-    { name: "island-3", size: 160, x: -380, z: 280 },
-  ];
+  const terrainSeed = Math.floor(Math.random() * 10000) + 1;
+  const landConfig = {
+    name: "landmass",
+    size: 1200,
+    x: 0,
+    z: 0,
+    hillHeight: 6,
+    mountainHeight: 26,
+    flattenCenterRadius: 140,
+  };
 
-  const islands = islandConfigs.map((config) => {
-    const island = BABYLON.MeshBuilder.CreateGround(
-      config.name,
-      { width: config.size, height: config.size },
-      scene
-    );
-    island.position.set(config.x, 1, config.z);
-    island.material = islandMat;
-    return island;
+  const landMaskOptions = {
+    size: landConfig.size,
+    seed: terrainSeed + 11,
+    seedOffset: terrainSeed * 0.4,
+    islandScaleLarge: 320,
+    islandScaleSmall: 140,
+    largeThreshold: 0.55,
+    largeFalloff: 0.18,
+    smallThreshold: 0.6,
+    smallFalloff: 0.2,
+    smallWeight: 0.65,
+    coastScale: 90,
+    coastThreshold: 0.45,
+    coastFalloff: 0.35,
+    coastCut: 0.28,
+    centerRadius: 220,
+    hillScale: 60,
+    mountainScale: 180,
+    hillHeight: landConfig.hillHeight,
+    mountainHeight: landConfig.mountainHeight,
+    baseHeight: 1,
+    seaFloorHeight: -2.5,
+    flattenCenterRadius: landConfig.flattenCenterRadius,
+  };
+
+  const landmass = BABYLON.MeshBuilder.CreateGround(
+    landConfig.name,
+    { width: landConfig.size, height: landConfig.size, subdivisions: 200 },
+    scene
+  );
+  landmass.position.set(landConfig.x, 0, landConfig.z);
+  landmass.material = grassMat;
+  applyLandmassTerrain(landmass, {
+    ...landMaskOptions,
+    flattenCenterRadius: landConfig.flattenCenterRadius,
   });
+
+  const minimapSamples = 64;
+  const minimapLand = new Array(minimapSamples * minimapSamples);
+  for (let z = 0; z < minimapSamples; z += 1) {
+    for (let x = 0; x < minimapSamples; x += 1) {
+      const nx = x / (minimapSamples - 1) - 0.5;
+      const nz = z / (minimapSamples - 1) - 0.5;
+      const worldX = nx * 2000;
+      const worldZ = nz * 2000;
+      minimapLand[z * minimapSamples + x] = getLandMaskAt(
+        worldX,
+        worldZ,
+        landMaskOptions
+      );
+    }
+  }
 
   const runwayLength = 260;
   const runwayWidth = 40;
@@ -191,6 +464,7 @@ export async function startGame() {
 
   const { mesh: jet, controller } = await createJet(scene, runwayStart);
   controller.reset();
+  const jetAudio = createJetAudio(scene, jet);
 
   const camera = new BABYLON.FreeCamera(
     "camera",
@@ -198,12 +472,14 @@ export async function startGame() {
     scene
   );
   camera.inputs.clear();
+  scene.activeCamera = camera;
 
   const hud = createHUD();
   const inputManager = createInputManager();
   let cameraMode = "chase";
   let isPaused = false;
   let brakeEngaged = true;
+  let autoLevelEnabled = false;
 
   hud.setMode(cameraMode);
 
@@ -251,10 +527,21 @@ export async function startGame() {
       isPaused = !isPaused;
     }
 
-    if (!isPaused) {
-      controller.update(clampedDt, inputManager.input, brakeEngaged);
+    if (inputManager.consumeAutoLevelToggle()) {
+      autoLevelEnabled = !autoLevelEnabled;
     }
 
+    if (!isPaused) {
+      controller.update(
+        clampedDt,
+        inputManager.input,
+        brakeEngaged,
+        autoLevelEnabled
+      );
+    }
+
+    jetAudio.setPaused(isPaused);
+    jetAudio.update(clampedDt, controller.throttle);
     updateCamera();
 
     hud.update({
@@ -262,7 +549,8 @@ export async function startGame() {
       altitude: jet.position.y,
       throttle: controller.throttle,
       position: jet.position,
-      islands: islandConfigs,
+      landMap: minimapLand,
+      landMapResolution: minimapSamples,
       isPaused,
       brakeEngaged,
     });

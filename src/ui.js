@@ -16,7 +16,16 @@ export function createHUD() {
   const worldExtent = 1000;
   let cockpitMode = false;
 
-  function update({ speed, altitude, throttle, position, islands, isPaused, brakeEngaged }) {
+  function update({
+    speed,
+    altitude,
+    throttle,
+    position,
+    landMap,
+    landMapResolution,
+    isPaused,
+    brakeEngaged,
+  }) {
     speedEl.textContent = `Speed: ${formatNumber(speed)} m/s`;
     altitudeEl.textContent = `Altitude: ${formatNumber(altitude)} m`;
     throttleEl.textContent = `Throttle: ${formatNumber(throttle * 100)}%`;
@@ -46,18 +55,20 @@ export function createHUD() {
     mapCtx.fillStyle = "#2b5fa6";
     mapCtx.fillRect(0, 0, mapSize, mapSize);
 
-    mapCtx.fillStyle = "#38a049";
-    islands.forEach((island) => {
-      const islandX = ((island.x / (worldExtent * 2)) + 0.5) * mapSize;
-      const islandY = ((island.z / (worldExtent * 2)) + 0.5) * mapSize;
-      const islandPixelSize = (island.size / (worldExtent * 2)) * mapSize;
-      mapCtx.fillRect(
-        islandX - islandPixelSize / 2,
-        islandY - islandPixelSize / 2,
-        islandPixelSize,
-        islandPixelSize
-      );
-    });
+    if (landMap && landMapResolution) {
+      const cellSize = mapSize / landMapResolution;
+      mapCtx.fillStyle = "#38a049";
+      for (let z = 0; z < landMapResolution; z += 1) {
+        for (let x = 0; x < landMapResolution; x += 1) {
+          const mask = landMap[z * landMapResolution + x];
+          if (mask > 0.08) {
+            mapCtx.globalAlpha = Math.min(1, mask * 1.1);
+            mapCtx.fillRect(x * cellSize, z * cellSize, cellSize, cellSize);
+          }
+        }
+      }
+      mapCtx.globalAlpha = 1;
+    }
 
     const clampedX = Math.max(-worldExtent, Math.min(worldExtent, position.x));
     const clampedZ = Math.max(-worldExtent, Math.min(worldExtent, position.z));

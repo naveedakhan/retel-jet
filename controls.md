@@ -12,3 +12,4 @@
 - B: Toggle brake on/off
 - P: Pause/unpause
 - R: Reset jet position
+- L: Toggle auto-level

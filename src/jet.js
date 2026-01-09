@@ -73,7 +73,7 @@ class JetController {
     this.throttle = 0;
   }
 
-  update(dt, input, brakeEngaged) {
+  update(dt, input, brakeEngaged, autoLevelEnabled) {
     const isGrounded = this.mesh.position.y <= this.minAltitude + 0.01;
     const throttleDelta =
       (input.throttleUp ? 1 : 0) - (input.throttleDown ? 1 : 0);
@@ -94,12 +94,16 @@ class JetController {
     const rollInput = input.roll * controlScale;
     const yawInput = input.yaw * controlScale;
 
-    const currentRotation = this.mesh.rotationQuaternion.toEulerAngles();
-    const pitchAngle = currentRotation.x;
-    const rollAngle = currentRotation.z;
+    let autoPitch = 0;
+    let autoRoll = 0;
+    if (autoLevelEnabled) {
+      const currentRotation = this.mesh.rotationQuaternion.toEulerAngles();
+      const pitchAngle = currentRotation.x;
+      const rollAngle = currentRotation.z;
 
-    const autoPitch = Math.abs(input.pitch) < 0.01 ? -pitchAngle : 0;
-    const autoRoll = Math.abs(input.roll) < 0.01 ? -rollAngle : 0;
+      autoPitch = Math.abs(input.pitch) < 0.01 ? -pitchAngle : 0;
+      autoRoll = Math.abs(input.roll) < 0.01 ? -rollAngle : 0;
+    }
 
     const targetAngular = new BABYLON.Vector3(
       pitchInput * this.pitchRate + autoPitch * this.autoLevelStrength,
