@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retel Jet</title>
+  </head>
+  <body>
+    <canvas id="renderCanvas"></canvas>
+    <canvas id="cockpitHud" width="1200" height="700" aria-label="Cockpit HUD"></canvas>
+    <div id="hud">
+      <div id="hud-speed">Speed: 0 m/s</div>
+      <div id="hud-altitude">Altitude: 0 m</div>
+      <div id="hud-throttle">Throttle: 0%</div>
+      <div id="hud-status"></div>
+    </div>
+    <canvas id="minimap" width="180" height="180" aria-label="Mini map"></canvas>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
