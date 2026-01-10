@@ -13,7 +13,7 @@ export function createHUD() {
   const minimap = document.getElementById("minimap");
   const mapCtx = minimap.getContext("2d");
   const mapSize = minimap.width;
-  const worldExtent = 1000;
+  const defaultWorldExtent = 1000;
   let cockpitMode = false;
 
   function update({
@@ -23,6 +23,8 @@ export function createHUD() {
     position,
     landMap,
     landMapResolution,
+    landMapWorldSize,
+    worldExtent,
     isPaused,
     brakeEngaged,
   }) {
@@ -55,25 +57,41 @@ export function createHUD() {
     mapCtx.fillStyle = "#2b5fa6";
     mapCtx.fillRect(0, 0, mapSize, mapSize);
 
-    if (landMap && landMapResolution) {
-      const cellSize = mapSize / landMapResolution;
+    const mapWorldExtent = worldExtent ?? defaultWorldExtent;
+
+    if (landMap && landMapResolution && landMapWorldSize) {
+      const landPixelSize =
+        (landMapWorldSize / (mapWorldExtent * 2)) * mapSize;
+      const landOffset = (mapSize - landPixelSize) / 2;
+      const cellSize = landPixelSize / landMapResolution;
       mapCtx.fillStyle = "#38a049";
       for (let z = 0; z < landMapResolution; z += 1) {
         for (let x = 0; x < landMapResolution; x += 1) {
           const mask = landMap[z * landMapResolution + x];
-          if (mask > 0.08) {
+          if (mask > 0.12) {
             mapCtx.globalAlpha = Math.min(1, mask * 1.1);
-            mapCtx.fillRect(x * cellSize, z * cellSize, cellSize, cellSize);
+            mapCtx.fillRect(
+              landOffset + x * cellSize,
+              landOffset + z * cellSize,
+              cellSize,
+              cellSize
+            );
           }
         }
       }
       mapCtx.globalAlpha = 1;
     }
 
-    const clampedX = Math.max(-worldExtent, Math.min(worldExtent, position.x));
-    const clampedZ = Math.max(-worldExtent, Math.min(worldExtent, position.z));
-    const mapX = ((clampedX / (worldExtent * 2)) + 0.5) * mapSize;
-    const mapY = ((clampedZ / (worldExtent * 2)) + 0.5) * mapSize;
+    const clampedX = Math.max(
+      -mapWorldExtent,
+      Math.min(mapWorldExtent, position.x)
+    );
+    const clampedZ = Math.max(
+      -mapWorldExtent,
+      Math.min(mapWorldExtent, position.z)
+    );
+    const mapX = ((clampedX / (mapWorldExtent * 2)) + 0.5) * mapSize;
+    const mapY = ((clampedZ / (mapWorldExtent * 2)) + 0.5) * mapSize;
 
     mapCtx.fillStyle = "#d94a3a";
     mapCtx.beginPath();

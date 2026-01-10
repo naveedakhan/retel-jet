@@ -52,9 +52,9 @@ function fbmNoise(x, z, seed, octaves, lacunarity, gain) {
 }
 
 function getLandMaskAt(x, z, options) {
-  const radius = options.size * 0.5;
-  const dist = Math.sqrt(x * x + z * z);
-  const radial = smoothStep(clamp((radius - dist) / radius, 0, 1));
+  const halfSize = options.size * 0.5;
+  const squareDist = Math.max(Math.abs(x), Math.abs(z));
+  const radial = smoothStep(clamp((halfSize - squareDist) / halfSize, 0, 1));
 
   const largeNoise = fbmNoise(
     (x + options.seedOffset) / options.islandScaleLarge,
@@ -96,8 +96,9 @@ function getLandMaskAt(x, z, options) {
   islandBase = clamp(islandBase - (1 - coastMask) * options.coastCut, 0, 1);
 
   if (options.centerRadius > 0) {
+    const centerDist = Math.sqrt(x * x + z * z);
     const centerMask = smoothStep(
-      clamp(1 - dist / options.centerRadius, 0, 1)
+      clamp(1 - centerDist / options.centerRadius, 0, 1)
     );
     islandBase = Math.max(islandBase, centerMask);
   }
@@ -109,6 +110,7 @@ function applyLandmassTerrain(mesh, options) {
   const positions = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
   const indices = mesh.getIndices();
   const normals = [];
+  const colors = [];
   const seed = options.seed;
 
   for (let i = 0; i < positions.length; i += 3) {
@@ -130,31 +132,40 @@ function applyLandmassTerrain(mesh, options) {
       (x + options.seedOffset) / options.mountainScale,
       (z + options.seedOffset) / options.mountainScale,
       seed + 101,
-      3,
+      4,
       2.2,
       0.55
     );
-    const mountainRidge = Math.max(0, mountainNoise - 0.52);
+    const mountainRidge = Math.max(0, mountainNoise - 0.48);
     height += mountainRidge * mountainRidge * options.mountainHeight;
 
     const landMask = getLandMaskAt(x, z, options);
+    const shoreBlend = smoothStep(
+      clamp((landMask - options.shoreStart) / options.shoreWidth, 0, 1)
+    );
 
     if (options.flattenCenterRadius > 0) {
       const flat = clamp(1 - dist / options.flattenCenterRadius, 0, 1);
       height *= 1 - smoothStep(flat);
     }
 
-    const landHeight = options.baseHeight + height * landMask;
+    const landHeight = options.baseHeight + height;
     positions[i + 1] = BABYLON.Scalar.Lerp(
       options.seaFloorHeight,
       landHeight,
-      landMask
+      shoreBlend
     );
+
+    const alpha = shoreBlend;
+    colors.push(0.18, 0.56, 0.22, alpha);
   }
 
   BABYLON.VertexData.ComputeNormals(positions, indices, normals);
   mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
   mesh.setVerticesData(BABYLON.VertexBuffer.NormalKind, normals);
+  mesh.setVerticesData(BABYLON.VertexBuffer.ColorKind, colors);
+  mesh.hasVertexAlpha = true;
+  mesh.useVertexColors = true;
   mesh.refreshBoundingInfo();
 }
 
@@ -335,29 +346,21 @@ export async function startGame() {
   skybox.material = skyMat;
   skybox.isPickable = false;
 
-  const ocean = BABYLON.MeshBuilder.CreateGround(
-    "ocean",
-    { width: 2000, height: 2000 },
-    scene
-  );
-  const oceanMat = new BABYLON.StandardMaterial("oceanMat", scene);
-  oceanMat.diffuseColor = new BABYLON.Color3(0.1, 0.3, 0.6);
-  oceanMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.2);
-  ocean.material = oceanMat;
-
   const grassMat = new BABYLON.StandardMaterial("grassMat", scene);
   grassMat.diffuseColor = new BABYLON.Color3(0.18, 0.56, 0.22);
   grassMat.ambientColor = new BABYLON.Color3(0.1, 0.22, 0.12);
   grassMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+  grassMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHATESTANDBLEND;
+  grassMat.alphaCutOff = 0.25;
 
   const terrainSeed = Math.floor(Math.random() * 10000) + 1;
   const landConfig = {
     name: "landmass",
-    size: 1200,
+    size: 2000,
     x: 0,
     z: 0,
-    hillHeight: 6,
-    mountainHeight: 26,
+    hillHeight: 8,
+    mountainHeight: 80,
     flattenCenterRadius: 140,
   };
 
@@ -367,22 +370,24 @@ export async function startGame() {
     seedOffset: terrainSeed * 0.4,
     islandScaleLarge: 320,
     islandScaleSmall: 140,
-    largeThreshold: 0.55,
-    largeFalloff: 0.18,
-    smallThreshold: 0.6,
-    smallFalloff: 0.2,
-    smallWeight: 0.65,
+    largeThreshold: 0.5,
+    largeFalloff: 0.2,
+    smallThreshold: 0.58,
+    smallFalloff: 0.22,
+    smallWeight: 0.7,
     coastScale: 90,
     coastThreshold: 0.45,
     coastFalloff: 0.35,
-    coastCut: 0.28,
+    coastCut: 0.35,
     centerRadius: 220,
+    shoreStart: 0.3,
+    shoreWidth: 0.14,
     hillScale: 60,
     mountainScale: 180,
     hillHeight: landConfig.hillHeight,
     mountainHeight: landConfig.mountainHeight,
-    baseHeight: 1,
-    seaFloorHeight: -2.5,
+    baseHeight: 2,
+    seaFloorHeight: -6,
     flattenCenterRadius: landConfig.flattenCenterRadius,
   };
 
@@ -398,19 +403,34 @@ export async function startGame() {
     flattenCenterRadius: landConfig.flattenCenterRadius,
   });
 
+  const ocean = BABYLON.MeshBuilder.CreateGround(
+    "ocean",
+    { width: 2200, height: 2200 },
+    scene
+  );
+  ocean.position.y = landMaskOptions.seaFloorHeight + 0.2;
+  const oceanMat = new BABYLON.StandardMaterial("oceanMat", scene);
+  oceanMat.diffuseColor = new BABYLON.Color3(0.1, 0.3, 0.6);
+  oceanMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.2);
+  ocean.material = oceanMat;
+
   const minimapSamples = 64;
   const minimapLand = new Array(minimapSamples * minimapSamples);
   for (let z = 0; z < minimapSamples; z += 1) {
     for (let x = 0; x < minimapSamples; x += 1) {
       const nx = x / (minimapSamples - 1) - 0.5;
       const nz = z / (minimapSamples - 1) - 0.5;
-      const worldX = nx * 2000;
-      const worldZ = nz * 2000;
-      minimapLand[z * minimapSamples + x] = getLandMaskAt(
-        worldX,
-        worldZ,
-        landMaskOptions
+      const worldX = nx * landConfig.size;
+      const worldZ = nz * landConfig.size;
+      const mask = getLandMaskAt(worldX, worldZ, landMaskOptions);
+      const shoreBlend = smoothStep(
+        clamp(
+          (mask - landMaskOptions.shoreStart) / landMaskOptions.shoreWidth,
+          0,
+          1
+        )
       );
+      minimapLand[z * minimapSamples + x] = shoreBlend;
     }
   }
 
@@ -455,6 +475,51 @@ export async function startGame() {
   );
   threshold.position.set(0, 1.06, -runwayLength / 2 + 10);
   threshold.material = markingMat;
+
+  const buildingMat = new BABYLON.StandardMaterial("buildingMat", scene);
+  buildingMat.diffuseColor = new BABYLON.Color3(0.75, 0.75, 0.78);
+  buildingMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+  const buildingConfigs = [
+    { x: -60, z: -40, w: 20, h: 12, d: 15 },
+    { x: -35, z: -50, w: 15, h: 18, d: 12 },
+    { x: -80, z: -65, w: 18, h: 8, d: 18 },
+    { x: 50, z: -35, w: 22, h: 15, d: 20 },
+    { x: 70, z: -60, w: 16, h: 20, d: 14 },
+    { x: 85, z: -85, w: 12, h: 10, d: 12 },
+    { x: -45, z: 40, w: 14, h: 14, d: 16 },
+    { x: 60, z: 50, w: 18, h: 12, d: 15 },
+  ];
+
+  for (const config of buildingConfigs) {
+    const building = BABYLON.MeshBuilder.CreateBox(
+      `building-${config.x}-${config.z}`,
+      { width: config.w, height: config.h, depth: config.d },
+      scene
+    );
+    building.position.set(config.x, config.h / 2 + 1, config.z);
+    building.material = buildingMat;
+  }
+
+  const towerBase = BABYLON.MeshBuilder.CreateBox(
+    "tower-base",
+    { width: 10, height: 30, depth: 10 },
+    scene
+  );
+  towerBase.position.set(30, 16, 80);
+  towerBase.material = buildingMat;
+
+  const towerTop = BABYLON.MeshBuilder.CreateBox(
+    "tower-top",
+    { width: 16, height: 8, depth: 16 },
+    scene
+  );
+  towerTop.position.set(30, 35, 80);
+  const towerTopMat = new BABYLON.StandardMaterial("towerTopMat", scene);
+  towerTopMat.diffuseColor = new BABYLON.Color3(0.65, 0.65, 0.68);
+  towerTopMat.specularColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+  towerTopMat.emissiveColor = new BABYLON.Color3(0.1, 0.1, 0.12);
+  towerTop.material = towerTopMat;
 
   const runwayStart = new BABYLON.Vector3(
     0,
@@ -551,6 +616,8 @@ export async function startGame() {
       position: jet.position,
       landMap: minimapLand,
       landMapResolution: minimapSamples,
+      landMapWorldSize: landConfig.size,
+      worldExtent: 1000,
       isPaused,
       brakeEngaged,
     });
