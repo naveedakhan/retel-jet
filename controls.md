@@ -8,7 +8,9 @@
 - Arrow Right: Roll right
 - A: Yaw left
 - D: Yaw right
-- Space: Toggle camera view
+- Space: Cycle camera view (chase/cockpit/overview)
+- + / - (or Numpad + / -): Zoom in/out while in overview camera
+- O: Toggle overview camera orbit on/off
 - B: Toggle brake on/off
 - P: Pause/unpause
 - R: Reset jet position
