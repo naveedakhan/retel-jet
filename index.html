@@ -15,6 +15,45 @@
       <div id="hud-status"></div>
     </div>
     <canvas id="minimap" width="180" height="180" aria-label="Mini map"></canvas>
+    
+    <!-- Mobile/Desktop Control Mode Toggle -->
+    <button id="controlModeToggle" class="control-toggle" aria-label="Toggle control mode">
+      <span class="toggle-icon keyboard-icon">⌨️</span>
+      <span class="toggle-icon mobile-icon" style="display: none;">📱</span>
+    </button>
+    
+    <!-- Mobile Controls Container -->
+    <div id="mobileControls" style="display: none;">
+      <!-- Virtual Joystick for Pitch/Roll -->
+      <div id="joystickContainer" class="joystick-container">
+        <div id="joystickOuter" class="joystick-outer">
+          <div id="joystickInner" class="joystick-inner"></div>
+        </div>
+        <div class="joystick-label">FLIGHT</div>
+      </div>
+      
+      <!-- Yaw Controls (Left/Right buttons) -->
+      <div id="yawControls" class="yaw-controls">
+        <button class="control-btn yaw-btn" data-action="yaw-left">⬅️ YAW LEFT</button>
+        <button class="control-btn yaw-btn" data-action="yaw-right">YAW RIGHT ➡️</button>
+      </div>
+      
+      <!-- Throttle Controls -->
+      <div id="throttleControls" class="throttle-controls">
+        <button class="control-btn throttle-btn" data-action="throttle-up">⬆️<br>THROTTLE</button>
+        <button class="control-btn throttle-btn" data-action="throttle-down">⬇️<br>THROTTLE</button>
+      </div>
+      
+      <!-- Action Buttons -->
+      <div id="actionButtons" class="action-buttons">
+        <button class="control-btn action-btn" data-action="brake">🛑<br>BRAKE</button>
+        <button class="control-btn action-btn" data-action="camera">📷<br>CAMERA</button>
+        <button class="control-btn action-btn" data-action="reset">🔄<br>RESET</button>
+        <button class="control-btn action-btn" data-action="pause">⏸️<br>PAUSE</button>
+        <button class="control-btn action-btn" data-action="autolevel">⚖️<br>AUTO-LVL</button>
+      </div>
+    </div>
+    
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

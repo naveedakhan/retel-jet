@@ -453,7 +453,161 @@ function createInputManager() {
     orbitToggle: false,
   };
 
+  // Mobile control state
+  let mobileControlsEnabled = false;
+  const mobileInput = {
+    pitch: 0,
+    roll: 0,
+    yaw: 0,
+    throttleUp: false,
+    throttleDown: false,
+  };
+  
+  let joystickActive = false;
+  let joystickStartX = 0;
+  let joystickStartY = 0;
+  
+  // Virtual joystick setup
+  const joystickOuter = document.getElementById("joystickOuter");
+  const joystickInner = document.getElementById("joystickInner");
+  const mobileControlsContainer = document.getElementById("mobileControls");
+  const controlModeToggle = document.getElementById("controlModeToggle");
+  const keyboardIcon = controlModeToggle.querySelector(".keyboard-icon");
+  const mobileIcon = controlModeToggle.querySelector(".mobile-icon");
+  
+  function setMobileControlsEnabled(enabled) {
+    mobileControlsEnabled = enabled;
+    if (enabled) {
+      mobileControlsContainer.style.display = "block";
+      keyboardIcon.style.display = "none";
+      mobileIcon.style.display = "block";
+    } else {
+      mobileControlsContainer.style.display = "none";
+      keyboardIcon.style.display = "block";
+      mobileIcon.style.display = "none";
+      // Reset mobile inputs
+      mobileInput.pitch = 0;
+      mobileInput.roll = 0;
+      mobileInput.yaw = 0;
+      mobileInput.throttleUp = false;
+      mobileInput.throttleDown = false;
+    }
+  }
+  
+  // Control mode toggle
+  controlModeToggle.addEventListener("click", () => {
+    setMobileControlsEnabled(!mobileControlsEnabled);
+  });
+  
+  // Virtual joystick handlers
+  function handleJoystickStart(e) {
+    e.preventDefault();
+    joystickActive = true;
+    const rect = joystickOuter.getBoundingClientRect();
+    joystickStartX = rect.left + rect.width / 2;
+    joystickStartY = rect.top + rect.height / 2;
+  }
+  
+  function handleJoystickMove(e) {
+    if (!joystickActive) return;
+    e.preventDefault();
+    
+    const touch = e.touches ? e.touches[0] : e;
+    const deltaX = touch.clientX - joystickStartX;
+    const deltaY = touch.clientY - joystickStartY;
+    
+    const maxDistance = 40; // Max pixels from center
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    const limitedDistance = Math.min(distance, maxDistance);
+    
+    if (distance > 0) {
+      const angle = Math.atan2(deltaY, deltaX);
+      const x = Math.cos(angle) * limitedDistance;
+      const y = Math.sin(angle) * limitedDistance;
+      
+      joystickInner.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+      
+      // Map to flight controls: X = roll, Y = pitch
+      mobileInput.roll = clamp(x / maxDistance, -1, 1);
+      mobileInput.pitch = clamp(-y / maxDistance, -1, 1); // Invert Y for intuitive up/down
+    }
+  }
+  
+  function handleJoystickEnd(e) {
+    if (!joystickActive) return;
+    e.preventDefault();
+    joystickActive = false;
+    joystickInner.style.transform = "translate(-50%, -50%)";
+    mobileInput.roll = 0;
+    mobileInput.pitch = 0;
+  }
+  
+  joystickOuter.addEventListener("touchstart", handleJoystickStart);
+  joystickOuter.addEventListener("mousedown", handleJoystickStart);
+  document.addEventListener("touchmove", handleJoystickMove);
+  document.addEventListener("mousemove", handleJoystickMove);
+  document.addEventListener("touchend", handleJoystickEnd);
+  document.addEventListener("mouseup", handleJoystickEnd);
+  
+  // Button handlers
+  const buttons = document.querySelectorAll(".control-btn");
+  buttons.forEach((button) => {
+    const action = button.dataset.action;
+    
+    function handleButtonStart(e) {
+      e.preventDefault();
+      
+      if (action === "throttle-up") {
+        mobileInput.throttleUp = true;
+        button.classList.add("active");
+      } else if (action === "throttle-down") {
+        mobileInput.throttleDown = true;
+        button.classList.add("active");
+      } else if (action === "yaw-left") {
+        mobileInput.yaw = -1;
+        button.classList.add("active");
+      } else if (action === "yaw-right") {
+        mobileInput.yaw = 1;
+        button.classList.add("active");
+      } else if (action === "brake") {
+        input.brakeToggle = true;
+      } else if (action === "camera") {
+        input.toggleCamera = true;
+      } else if (action === "reset") {
+        input.reset = true;
+      } else if (action === "pause") {
+        input.pause = true;
+      } else if (action === "autolevel") {
+        input.autoLevelToggle = true;
+      }
+    }
+    
+    function handleButtonEnd(e) {
+      e.preventDefault();
+      
+      if (action === "throttle-up") {
+        mobileInput.throttleUp = false;
+        button.classList.remove("active");
+      } else if (action === "throttle-down") {
+        mobileInput.throttleDown = false;
+        button.classList.remove("active");
+      } else if (action === "yaw-left" || action === "yaw-right") {
+        mobileInput.yaw = 0;
+        button.classList.remove("active");
+      }
+    }
+    
+    button.addEventListener("touchstart", handleButtonStart);
+    button.addEventListener("mousedown", handleButtonStart);
+    button.addEventListener("touchend", handleButtonEnd);
+    button.addEventListener("mouseup", handleButtonEnd);
+    button.addEventListener("touchcancel", handleButtonEnd);
+  });
+
+  // Keyboard handlers (only active when mobile controls disabled)
   window.addEventListener("keydown", (event) => {
+    if (mobileControlsEnabled) return; // Ignore keyboard when mobile mode is on
+    
     pressed.add(event.code);
 
     if (event.code === "Space" && !event.repeat) {
@@ -490,20 +644,33 @@ function createInputManager() {
   });
 
   window.addEventListener("keyup", (event) => {
+    if (mobileControlsEnabled) return;
     pressed.delete(event.code);
   });
 
   function updateAxes() {
-    input.pitch =
-      (pressed.has("ArrowUp") ? 1 : 0) + (pressed.has("ArrowDown") ? -1 : 0);
-    input.roll =
-      (pressed.has("ArrowRight") ? 1 : 0) +
-      (pressed.has("ArrowLeft") ? -1 : 0);
-    input.yaw = (pressed.has("KeyD") ? 1 : 0) + (pressed.has("KeyA") ? -1 : 0);
-    input.throttleUp = pressed.has("KeyW");
-    input.throttleDown = pressed.has("KeyS");
-    input.zoomIn = pressed.has("Equal") || pressed.has("NumpadAdd");
-    input.zoomOut = pressed.has("Minus") || pressed.has("NumpadSubtract");
+    if (mobileControlsEnabled) {
+      // Use mobile input
+      input.pitch = mobileInput.pitch;
+      input.roll = mobileInput.roll;
+      input.yaw = mobileInput.yaw;
+      input.throttleUp = mobileInput.throttleUp;
+      input.throttleDown = mobileInput.throttleDown;
+    } else {
+      // Use keyboard input
+      input.pitch =
+        (pressed.has("ArrowUp") ? 1 : 0) + (pressed.has("ArrowDown") ? -1 : 0);
+      input.roll =
+        (pressed.has("ArrowRight") ? 1 : 0) +
+        (pressed.has("ArrowLeft") ? -1 : 0);
+      input.yaw = (pressed.has("KeyD") ? 1 : 0) + (pressed.has("KeyA") ? -1 : 0);
+      input.throttleUp = pressed.has("KeyW");
+      input.throttleDown = pressed.has("KeyS");
+    }
+    
+    // Zoom controls only work in keyboard mode
+    input.zoomIn = !mobileControlsEnabled && (pressed.has("Equal") || pressed.has("NumpadAdd"));
+    input.zoomOut = !mobileControlsEnabled && (pressed.has("Minus") || pressed.has("NumpadSubtract"));
   }
 
   function consumeToggle() {
