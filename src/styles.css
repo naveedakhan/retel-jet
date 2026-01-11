@@ -66,9 +66,9 @@ body {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  width: 180px;
-  height: 180px;
-  border-radius: 12px;
+  width: 140px;
+  height: 140px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.7);
   border: 2px solid rgba(11, 27, 43, 0.5);
   pointer-events: none;
@@ -116,39 +116,39 @@ body {
 /* Virtual Joystick */
 .joystick-container {
   position: absolute;
-  bottom: 30px;
-  left: 30px;
-  width: 160px;
-  height: 160px;
+  bottom: 80px;
+  left: 20px;
+  width: 140px;
+  height: 140px;
   pointer-events: all;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .joystick-outer {
-  width: 140px;
-  height: 140px;
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.2);
-  border: 3px solid rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.7);
   position: relative;
   touch-action: none;
-  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .joystick-inner {
-  width: 60px;
-  height: 60px;
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.9);
-  border: 3px solid rgba(11, 27, 43, 0.6);
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid rgba(11, 27, 43, 0.6);
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
   transition: all 0.1s ease;
 }
 
@@ -163,63 +163,63 @@ body {
 /* Yaw Controls */
 .yaw-controls {
   position: absolute;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 10px;
+  left: 20px;
   display: flex;
-  gap: 12px;
+  gap: 8px;
   pointer-events: all;
 }
 
 .yaw-btn {
-  padding: 12px 20px;
-  font-size: 12px;
-  min-width: 110px;
+  padding: 8px 12px;
+  font-size: 10px;
+  min-width: 60px;
+  height: 45px;
 }
 
 /* Throttle Controls */
 .throttle-controls {
   position: absolute;
-  bottom: 220px;
-  right: 30px;
+  bottom: 10px;
+  right: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   pointer-events: all;
 }
 
 .throttle-btn {
-  width: 80px;
-  height: 80px;
-  font-size: 11px;
+  width: 65px;
+  height: 65px;
+  font-size: 9px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
 }
 
 /* Action Buttons */
 .action-buttons {
   position: absolute;
   top: 80px;
-  right: 20px;
+  right: 15px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   pointer-events: all;
 }
 
 .action-btn {
-  width: 70px;
-  height: 65px;
-  font-size: 10px;
+  width: 60px;
+  height: 55px;
+  font-size: 9px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 8px;
+  gap: 1px;
+  padding: 6px;
 }
 
 /* Base Control Button Styles */
@@ -251,58 +251,101 @@ body {
 /* Responsive adjustments for smaller screens */
 @media (max-width: 768px) {
   .joystick-container {
-    bottom: 20px;
-    left: 20px;
-    width: 130px;
-    height: 130px;
+    bottom: 70px;
+    left: 15px;
   }
   
-  .joystick-outer {
-    width: 110px;
-    height: 110px;
+  .yaw-controls {
+    bottom: 8px;
+    left: 15px;
   }
   
-  .joystick-inner {
-    width: 50px;
-    height: 50px;
+  .throttle-controls {
+    bottom: 8px;
+    right: 15px;
   }
   
-  .throttle-btn {
-    width: 70px;
-    height: 70px;
-  }
-  
-  .action-btn {
-    width: 60px;
-    height: 55px;
-    font-size: 9px;
-  }
-  
-  .yaw-btn {
-    min-width: 90px;
-    padding: 10px 16px;
-    font-size: 11px;
+  .action-buttons {
+    top: 70px;
+    right: 12px;
+    gap: 5px;
   }
 }
 
 @media (max-width: 480px) {
   #hud {
-    font-size: 13px;
-    padding: 8px 12px;
-    top: 12px;
-    left: 12px;
+    font-size: 11px;
+    padding: 6px 10px;
+    top: 10px;
+    left: 10px;
+    line-height: 1.3;
   }
   
   #minimap {
-    width: 120px;
-    height: 120px;
-    right: 12px;
-    bottom: 12px;
+    width: 100px;
+    height: 100px;
+    right: 10px;
+    bottom: 165px;
   }
   
   .control-toggle {
-    width: 50px;
-    height: 50px;
-    font-size: 24px;
+    width: 45px;
+    height: 45px;
+    font-size: 22px;
+    top: 10px;
+    right: 10px;
+  }
+  
+  .joystick-container {
+    bottom: 60px;
+    left: 12px;
+    width: 115px;
+    height: 115px;
+  }
+  
+  .joystick-outer {
+    width: 100px;
+    height: 100px;
+  }
+  
+  .joystick-inner {
+    width: 42px;
+    height: 42px;
+  }
+  
+  .yaw-controls {
+    bottom: 6px;
+    left: 12px;
+  }
+  
+  .yaw-btn {
+    width: 52px;
+    height: 40px;
+    font-size: 9px;
+    padding: 6px 8px;
+  }
+  
+  .throttle-controls {
+    bottom: 6px;
+    right: 12px;
+  }
+  
+  .throttle-btn {
+    width: 55px;
+    height: 55px;
+    font-size: 8px;
+  }
+  
+  .action-buttons {
+    top: 60px;
+    right: 10px;
+    gap: 4px;
+  }
+  
+  .action-btn {
+    width: 52px;
+    height: 48px;
+    font-size: 8px;
+    padding: 4px;
   }
 }
