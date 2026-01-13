@@ -375,22 +375,45 @@ function createCockpit(scene, jet) {
 }
 
 function createJetAudio(scene, jet) {
-  const audio = new Audio("/wjet-loop.wav");
-  audio.loop = true;
-  audio.volume = 0;
-  audio.preload = "auto";
+  const loopAudio = new Audio("/loop.wav");
+  loopAudio.loop = true;
+  loopAudio.volume = 0;
+  loopAudio.preload = "auto";
 
-  let currentVolume = 0;
-  let currentRate = 0.9;
+  const startAudio = new Audio("/start.wav");
+  startAudio.loop = false;
+  startAudio.volume = 0;
+  startAudio.preload = "auto";
+
+  const endAudio = new Audio("/end.wav");
+  endAudio.loop = false;
+  endAudio.volume = 0;
+  endAudio.preload = "auto";
+
+  let currentLoopVolume = 0;
+  let currentLoopRate = 0.9;
+  let currentStartVolume = 0;
+  let currentEndVolume = 0;
+  let lastThrottle = 0;
   let started = false;
   let isPaused = false;
+
+  const playSafely = (audio) => {
+    audio.play().catch(() => {});
+  };
+
+  const playOneShot = (audio) => {
+    if (!audio.paused) {
+      return;
+    }
+    audio.currentTime = 0;
+    playSafely(audio);
+  };
 
   const requestStart = () => {
     if (!started) {
       started = true;
-      audio.play().catch(() => {
-        started = false;
-      });
+      playSafely(loopAudio);
     }
   };
 
@@ -403,15 +426,47 @@ function createJetAudio(scene, jet) {
       return;
     }
 
-    const targetVolume = BABYLON.Scalar.Lerp(0.0, 0.95, throttle);
-    const targetRate = BABYLON.Scalar.Lerp(0.85, 1.5, throttle);
+    const deltaRate = (throttle - lastThrottle) / Math.max(dt, 0.001);
+    const upStrength = clamp((deltaRate - 0.05) / 0.55, 0, 1);
+    const downStrength = clamp((-deltaRate - 0.05) / 0.55, 0, 1);
+    const steeringStrength = Math.max(upStrength, downStrength);
+
+    const baseLoopVolume = BABYLON.Scalar.Lerp(0.05, 0.9, throttle);
+    const targetLoopVolume = baseLoopVolume * (1 - 0.4 * steeringStrength);
+    const targetLoopRate = BABYLON.Scalar.Lerp(0.85, 1.45, throttle);
+
+    const targetStartVolume =
+      upStrength * BABYLON.Scalar.Lerp(0.12, 0.85, throttle);
+    const targetEndVolume =
+      downStrength * BABYLON.Scalar.Lerp(0.12, 0.75, 1 - throttle);
+
     const response = 1 - Math.exp(-dt * 6);
 
-    currentVolume += (targetVolume - currentVolume) * response;
-    currentRate += (targetRate - currentRate) * response;
+    currentLoopVolume += (targetLoopVolume - currentLoopVolume) * response;
+    currentLoopRate += (targetLoopRate - currentLoopRate) * response;
+    currentStartVolume += (targetStartVolume - currentStartVolume) * response;
+    currentEndVolume += (targetEndVolume - currentEndVolume) * response;
 
-    audio.volume = currentVolume;
-    audio.playbackRate = currentRate;
+    loopAudio.volume = currentLoopVolume;
+    loopAudio.playbackRate = currentLoopRate;
+    startAudio.volume = currentStartVolume;
+    endAudio.volume = currentEndVolume;
+
+    if (started && upStrength > 0.02) {
+      startAudio.playbackRate = BABYLON.Scalar.Lerp(0.95, 1.2, throttle);
+      playOneShot(startAudio);
+    }
+
+    if (started && downStrength > 0.02) {
+      endAudio.playbackRate = BABYLON.Scalar.Lerp(0.95, 1.15, 1 - throttle);
+      playOneShot(endAudio);
+    }
+
+    if (started && loopAudio.paused) {
+      playSafely(loopAudio);
+    }
+
+    lastThrottle = throttle;
   }
 
   function setPaused(paused) {
@@ -421,14 +476,14 @@ function createJetAudio(scene, jet) {
 
     isPaused = paused;
     if (isPaused) {
-      audio.pause();
+      loopAudio.pause();
+      startAudio.pause();
+      endAudio.pause();
       return;
     }
 
     if (started) {
-      audio.play().catch(() => {
-        started = false;
-      });
+      playSafely(loopAudio);
     }
   }
 
@@ -868,20 +923,21 @@ export async function startGame() {
   markingMat.specularColor = new BABYLON.Color3(0.15, 0.15, 0.15);
 
   // Dashed center line - white dashes down the middle
-  const centerLineCount = 14;
   const centerLineLength = 10;
   const centerLineGap = 12;
-  for (let i = 0; i < centerLineCount; i += 1) {
+  const centerLineStart = -runwayLength / 2 + 55;
+  const centerLineEnd = runwayLength / 2 - 55;
+  for (
+    let z = centerLineStart;
+    z + centerLineLength / 2 <= centerLineEnd;
+    z += centerLineLength + centerLineGap
+  ) {
     const dash = BABYLON.MeshBuilder.CreateBox(
-      `runway-dash-${i}`,
+      `runway-dash-${z.toFixed(2)}`,
       { width: 1.2, height: 0.02, depth: centerLineLength },
       scene
     );
-    dash.position.set(
-      0,
-      1.08,
-      -runwayLength / 2 + 45 + i * (centerLineLength + centerLineGap)
-    );
+    dash.position.set(0, 1.08, z);
     dash.material = markingMat;
   }
 
@@ -1107,6 +1163,32 @@ export async function startGame() {
   taxiwayRight.position.set(50, 1.08, 40);
   taxiwayRight.material = taxiwayMat;
 
+  const glassMat = new BABYLON.StandardMaterial("glassMat", scene);
+  glassMat.diffuseColor = new BABYLON.Color3(0.55, 0.7, 0.9);
+  glassMat.emissiveColor = new BABYLON.Color3(0.08, 0.12, 0.18);
+  glassMat.specularColor = new BABYLON.Color3(0.6, 0.6, 0.6);
+  const glassTexture = createGlassTexture(scene, "glass-texture", {
+    top: new BABYLON.Color3(0.5, 0.72, 0.92),
+    mid: new BABYLON.Color3(0.35, 0.55, 0.75),
+    bottom: new BABYLON.Color3(0.25, 0.35, 0.45),
+    seed: 19,
+  });
+  glassMat.diffuseTexture = glassTexture;
+  glassMat.specularPower = 96;
+
+  const trimMat = new BABYLON.StandardMaterial("trimMat", scene);
+  trimMat.diffuseColor = new BABYLON.Color3(0.38, 0.38, 0.4);
+  trimMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+  const metalMat = new BABYLON.StandardMaterial("metalMat", scene);
+  metalMat.diffuseColor = new BABYLON.Color3(0.45, 0.46, 0.5);
+  metalMat.specularColor = new BABYLON.Color3(0.35, 0.35, 0.35);
+
+  const roofMat = new BABYLON.StandardMaterial("roofMat", scene);
+  roofMat.diffuseColor = new BABYLON.Color3(0.22, 0.22, 0.24);
+  roofMat.specularColor = new BABYLON.Color3(0.08, 0.08, 0.08);
+  roofMat.specularPower = 32;
+
   // Terminal building
   const terminalGroup = new BABYLON.TransformNode("terminal", scene);
   terminalGroup.position.set(-60, 0, 80);
@@ -1121,6 +1203,12 @@ export async function startGame() {
   const terminalMat = new BABYLON.StandardMaterial("terminalMat", scene);
   terminalMat.diffuseColor = new BABYLON.Color3(0.85, 0.82, 0.75);
   terminalMat.specularColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+  terminalMat.diffuseTexture = createConcreteTexture(scene, "terminal-concrete", {
+    top: new BABYLON.Color3(0.86, 0.83, 0.77),
+    bottom: new BABYLON.Color3(0.7, 0.68, 0.64),
+    seed: 11,
+  });
+  terminalMat.specularPower = 24;
   terminalBody.material = terminalMat;
   
   // Windows on terminal
@@ -1137,13 +1225,74 @@ export async function startGame() {
         20.3
       );
       window.parent = terminalGroup;
-      
+
       const windowMat = new BABYLON.StandardMaterial(`windowMat-${row}-${col}`, scene);
-      windowMat.diffuseColor = new BABYLON.Color3(0.6, 0.7, 0.85);
-      windowMat.emissiveColor = new BABYLON.Color3(0.15, 0.2, 0.3);
+      windowMat.diffuseTexture = glassTexture;
+      const lit = hash2d(row, col, 101) > 0.6;
+      windowMat.emissiveColor = lit
+        ? new BABYLON.Color3(0.5, 0.38, 0.2)
+        : new BABYLON.Color3(0.08, 0.12, 0.18);
+      windowMat.specularColor = new BABYLON.Color3(0.6, 0.6, 0.6);
+      windowMat.specularPower = 96;
       window.material = windowMat;
     }
   }
+
+  const terminalGlassFront = BABYLON.MeshBuilder.CreateBox(
+    "terminalGlassFront",
+    { width: 54, height: 10, depth: 0.6 },
+    scene
+  );
+  terminalGlassFront.position.set(0, 4, 20.7);
+  terminalGlassFront.parent = terminalGroup;
+  terminalGlassFront.material = glassMat;
+
+  const terminalRoof = BABYLON.MeshBuilder.CreateBox(
+    "terminalRoof",
+    { width: 64, height: 2, depth: 44 },
+    scene
+  );
+  terminalRoof.position.set(0, 11, 0);
+  terminalRoof.parent = terminalGroup;
+  terminalRoof.material = roofMat;
+
+  for (let i = 0; i < 4; i += 1) {
+    const roofUnit = BABYLON.MeshBuilder.CreateBox(
+      `terminalRoofUnit-${i}`,
+      { width: 6, height: 2.2, depth: 4 },
+      scene
+    );
+    roofUnit.position.set(-18 + i * 12, 13, -6 + (i % 2) * 10);
+    roofUnit.parent = terminalGroup;
+    roofUnit.material = metalMat;
+  }
+
+  const terminalCanopy = BABYLON.MeshBuilder.CreateBox(
+    "terminalCanopy",
+    { width: 50, height: 1.2, depth: 6 },
+    scene
+  );
+  terminalCanopy.position.set(0, -2, 23.5);
+  terminalCanopy.parent = terminalGroup;
+  terminalCanopy.material = trimMat;
+
+  const terminalAnnex = BABYLON.MeshBuilder.CreateBox(
+    "terminalAnnex",
+    { width: 24, height: 12, depth: 18 },
+    scene
+  );
+  terminalAnnex.position.set(-22, 2, -18);
+  terminalAnnex.parent = terminalGroup;
+  terminalAnnex.material = terminalMat;
+
+  const terminalAnnexGlass = BABYLON.MeshBuilder.CreateBox(
+    "terminalAnnexGlass",
+    { width: 20, height: 6, depth: 0.5 },
+    scene
+  );
+  terminalAnnexGlass.position.set(-22, 2, -27.5);
+  terminalAnnexGlass.parent = terminalGroup;
+  terminalAnnexGlass.material = glassMat;
   
   // Hangar building
   const hangarGroup = new BABYLON.TransformNode("hangar", scene);
@@ -1159,6 +1308,12 @@ export async function startGame() {
   const hangarMat = new BABYLON.StandardMaterial("hangarMat", scene);
   hangarMat.diffuseColor = new BABYLON.Color3(0.7, 0.65, 0.6);
   hangarMat.specularColor = new BABYLON.Color3(0.15, 0.15, 0.15);
+  hangarMat.diffuseTexture = createConcreteTexture(scene, "hangar-concrete", {
+    top: new BABYLON.Color3(0.7, 0.66, 0.62),
+    bottom: new BABYLON.Color3(0.55, 0.52, 0.5),
+    seed: 29,
+  });
+  hangarMat.specularPower = 18;
   hangarBody.material = hangarMat;
   
   // Hangar doors
@@ -1173,7 +1328,50 @@ export async function startGame() {
   const doorMat = new BABYLON.StandardMaterial("doorMat", scene);
   doorMat.diffuseColor = new BABYLON.Color3(0.5, 0.48, 0.45);
   doorMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+  doorMat.specularPower = 36;
   hangarDoor.material = doorMat;
+
+  const hangarRoof = BABYLON.MeshBuilder.CreateBox(
+    "hangarRoof",
+    { width: 54, height: 3, depth: 64 },
+    scene
+  );
+  hangarRoof.position.set(0, 14, 0);
+  hangarRoof.parent = hangarGroup;
+  hangarRoof.material = roofMat;
+
+  for (let i = 0; i < 6; i += 1) {
+    const vent = BABYLON.MeshBuilder.CreateCylinder(
+      `hangarVent-${i}`,
+      { diameter: 1.6, height: 2.2 },
+      scene
+    );
+    vent.position.set(
+      -18 + i * 6,
+      16.5,
+      -12 + (i % 2) * 8
+    );
+    vent.parent = hangarGroup;
+    vent.material = metalMat;
+  }
+
+  const hangarSideBand = BABYLON.MeshBuilder.CreateBox(
+    "hangarSideBand",
+    { width: 52, height: 4, depth: 1.2 },
+    scene
+  );
+  hangarSideBand.position.set(0, 4, -30.6);
+  hangarSideBand.parent = hangarGroup;
+  hangarSideBand.material = metalMat;
+
+  const hangarDoorFrame = BABYLON.MeshBuilder.CreateBox(
+    "hangarDoorFrame",
+    { width: 47, height: 24, depth: 0.6 },
+    scene
+  );
+  hangarDoorFrame.position.set(0, 1, 29.8);
+  hangarDoorFrame.parent = hangarGroup;
+  hangarDoorFrame.material = trimMat;
   
   // Control tower - right next to runway
   const towerGroup = new BABYLON.TransformNode("tower", scene);
@@ -1209,12 +1407,37 @@ export async function startGame() {
   const cabMat = new BABYLON.StandardMaterial("cabMat", scene);
   cabMat.diffuseColor = new BABYLON.Color3(0.6, 0.7, 0.85);
   cabMat.emissiveColor = new BABYLON.Color3(0.1, 0.15, 0.25);
+  cabMat.diffuseTexture = glassTexture;
+  cabMat.specularColor = new BABYLON.Color3(0.6, 0.6, 0.6);
+  cabMat.specularPower = 96;
   towerCab.material = cabMat;
 
+  const towerCabWindows = BABYLON.MeshBuilder.CreateCylinder(
+    "towerCabWindows",
+    { diameter: 10.6, height: 5.8, tessellation: 24 },
+    scene
+  );
+  towerCabWindows.position.set(0, 39.2, 0);
+  towerCabWindows.parent = towerGroup;
+  towerCabWindows.material = glassMat;
 
-  const roofMat = new BABYLON.StandardMaterial("roofMat", scene);
-  roofMat.diffuseColor = new BABYLON.Color3(0.22, 0.22, 0.24);
-  roofMat.specularColor = new BABYLON.Color3(0.08, 0.08, 0.08);
+  const towerRoof = BABYLON.MeshBuilder.CreateCylinder(
+    "towerRoof",
+    { diameter: 8.6, height: 1.2 },
+    scene
+  );
+  towerRoof.position.set(0, 43.2, 0);
+  towerRoof.parent = towerGroup;
+  towerRoof.material = trimMat;
+
+  const towerAntenna = BABYLON.MeshBuilder.CreateCylinder(
+    "towerAntenna",
+    { diameter: 0.6, height: 10 },
+    scene
+  );
+  towerAntenna.position.set(0, 49.4, 0);
+  towerAntenna.parent = towerGroup;
+  towerAntenna.material = metalMat;
 
   const buildingStyles = [
     {
@@ -1246,7 +1469,7 @@ export async function startGame() {
     return `rgb(${r}, ${g}, ${b})`;
   }
 
-  function createWindowTexture(sceneRef, name, options) {
+  function createGlassTexture(sceneRef, name, options) {
     const size = 256;
     const texture = new BABYLON.DynamicTexture(
       name,
@@ -1255,9 +1478,83 @@ export async function startGame() {
       false
     );
     const ctx = texture.getContext();
-
-    ctx.fillStyle = colorToCss(options.base);
+    const gradient = ctx.createLinearGradient(0, 0, 0, size);
+    gradient.addColorStop(0, colorToCss(options.top));
+    gradient.addColorStop(0.6, colorToCss(options.mid));
+    gradient.addColorStop(1, colorToCss(options.bottom));
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, size, size);
+
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = "rgb(255, 255, 255)";
+    for (let i = 0; i < 14; i += 1) {
+      const x = (i / 14) * size;
+      ctx.fillRect(x, 0, 1.5, size);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = "rgb(30, 60, 90)";
+    for (let i = 0; i < 50; i += 1) {
+      const x = (hash2d(i, i * 3, options.seed) * size) | 0;
+      const y = (hash2d(i * 2, i, options.seed) * size) | 0;
+      ctx.fillRect(x, y, 3, 20);
+    }
+    ctx.globalAlpha = 1;
+
+    texture.update(false);
+    texture.wrapU = BABYLON.Texture.WRAP_ADDRESSMODE;
+    texture.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+    return texture;
+  }
+
+  function createFacadeTextures(sceneRef, name, options) {
+    const size = 512;
+    const diffuse = new BABYLON.DynamicTexture(
+      `${name}-diffuse`,
+      { width: size, height: size },
+      sceneRef,
+      false
+    );
+    const emissive = new BABYLON.DynamicTexture(
+      `${name}-emissive`,
+      { width: size, height: size },
+      sceneRef,
+      false
+    );
+    const bump = new BABYLON.DynamicTexture(
+      `${name}-bump`,
+      { width: size, height: size },
+      sceneRef,
+      false
+    );
+
+    const ctx = diffuse.getContext();
+    const ectx = emissive.getContext();
+    const bctx = bump.getContext();
+
+    const baseGradient = ctx.createLinearGradient(0, 0, 0, size);
+    baseGradient.addColorStop(0, colorToCss(options.baseTop));
+    baseGradient.addColorStop(0.7, colorToCss(options.baseMid));
+    baseGradient.addColorStop(1, colorToCss(options.baseBottom));
+    ctx.fillStyle = baseGradient;
+    ctx.fillRect(0, 0, size, size);
+
+    ectx.fillStyle = "rgb(0, 0, 0)";
+    ectx.fillRect(0, 0, size, size);
+
+    bctx.fillStyle = "rgb(128, 128, 128)";
+    bctx.fillRect(0, 0, size, size);
+
+    ctx.globalAlpha = 0.12;
+    for (let i = 0; i < 1200; i += 1) {
+      const x = (hash2d(i, options.seed, 17) * size) | 0;
+      const y = (hash2d(options.seed, i, 31) * size) | 0;
+      const tone = 40 + (hash2d(i, i * 2, 47) * 35) | 0;
+      ctx.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
+      ctx.fillRect(x, y, 2, 2);
+    }
+    ctx.globalAlpha = 1;
 
     if (options.accent) {
       ctx.fillStyle = colorToCss(options.accent);
@@ -1266,13 +1563,14 @@ export async function startGame() {
 
     const rows = options.rows;
     const cols = options.cols;
-    const margin = size * 0.1;
+    const margin = size * 0.08;
     const usableW = size - margin * 2;
     const usableH = size - margin * 2;
     const stepX = usableW / cols;
     const stepY = usableH / rows;
-    const windowW = stepX * 0.55;
-    const windowH = stepY * 0.55;
+    const windowW = stepX * 0.62;
+    const windowH = stepY * 0.62;
+    const frame = Math.max(1.5, size * 0.002);
 
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
@@ -1281,20 +1579,96 @@ export async function startGame() {
           col + options.seed * 0.2,
           options.seed
         );
-        if (noise < 0.08) {
+        if (noise < 0.04) {
           continue;
         }
-        const intensity = 0.65 + noise * 0.35;
-        const windowColor = new BABYLON.Color3(
-          clamp(options.window.r * intensity, 0, 1),
-          clamp(options.window.g * intensity, 0, 1),
-          clamp(options.window.b * intensity, 0, 1)
-        );
-        ctx.fillStyle = colorToCss(windowColor);
+
         const x = margin + col * stepX + (stepX - windowW) * 0.5;
         const y = margin + row * stepY + (stepY - windowH) * 0.5;
+
+        const topTint = options.glassTop;
+        const bottomTint = options.glassBottom;
+        const gradient = ctx.createLinearGradient(0, y, 0, y + windowH);
+        gradient.addColorStop(0, colorToCss(topTint));
+        gradient.addColorStop(1, colorToCss(bottomTint));
+        ctx.fillStyle = gradient;
         ctx.fillRect(x, y, windowW, windowH);
+
+        ctx.strokeStyle = colorToCss(options.frame);
+        ctx.lineWidth = frame;
+        ctx.strokeRect(x, y, windowW, windowH);
+
+        ctx.fillStyle = colorToCss(options.frame);
+        ctx.fillRect(x, y + windowH * 0.62, windowW, frame);
+
+        const litChance = noise > 0.75;
+        if (litChance) {
+          const warm = 0.7 + (noise - 0.75) * 0.8;
+          ectx.fillStyle = `rgb(${Math.round(255 * warm)}, ${Math.round(
+            220 * warm
+          )}, ${Math.round(150 * warm)})`;
+          ectx.fillRect(x + frame, y + frame, windowW - frame * 2, windowH - frame * 2);
+        }
+
+        bctx.fillStyle = "rgb(150, 150, 150)";
+        bctx.fillRect(x - frame, y - frame, windowW + frame * 2, windowH + frame * 2);
+        bctx.fillStyle = "rgb(110, 110, 110)";
+        bctx.fillRect(x + frame, y + frame, windowW - frame * 2, windowH - frame * 2);
       }
+    }
+
+    ctx.globalAlpha = 0.18;
+    const sunGradient = ctx.createLinearGradient(0, size * 0.2, size, size * 0.8);
+    sunGradient.addColorStop(0, "rgba(160, 200, 240, 0.0)");
+    sunGradient.addColorStop(0.5, "rgba(140, 200, 220, 0.25)");
+    sunGradient.addColorStop(1, "rgba(80, 120, 140, 0.0)");
+    ctx.fillStyle = sunGradient;
+    ctx.fillRect(0, 0, size, size);
+    ctx.globalAlpha = 1;
+
+    diffuse.update(false);
+    emissive.update(false);
+    bump.update(false);
+
+    diffuse.wrapU = BABYLON.Texture.WRAP_ADDRESSMODE;
+    diffuse.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+    emissive.wrapU = BABYLON.Texture.WRAP_ADDRESSMODE;
+    emissive.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+    bump.wrapU = BABYLON.Texture.WRAP_ADDRESSMODE;
+    bump.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+
+    return { diffuse, emissive, bump };
+  }
+
+  function createConcreteTexture(sceneRef, name, options) {
+    const size = 256;
+    const texture = new BABYLON.DynamicTexture(
+      name,
+      { width: size, height: size },
+      sceneRef,
+      false
+    );
+    const ctx = texture.getContext();
+    const gradient = ctx.createLinearGradient(0, 0, 0, size);
+    gradient.addColorStop(0, colorToCss(options.top));
+    gradient.addColorStop(1, colorToCss(options.bottom));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.globalAlpha = 0.2;
+    for (let i = 0; i < 900; i += 1) {
+      const x = (hash2d(i, options.seed, 13) * size) | 0;
+      const y = (hash2d(options.seed, i, 23) * size) | 0;
+      const tone = 140 + ((hash2d(i, i * 2, 37) * 30) | 0);
+      ctx.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
+      ctx.fillRect(x, y, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = "rgba(40, 40, 40, 0.15)";
+    for (let i = 0; i < 14; i += 1) {
+      const y = (i / 14) * size;
+      ctx.fillRect(0, y, size, 1.5);
     }
 
     texture.update(false);
@@ -1310,25 +1684,33 @@ export async function startGame() {
     const style = buildingStyles[styleIndex];
     const rows = clamp(Math.round(config.h * 0.9), 4, 12);
     const cols = clamp(Math.round(Math.max(config.w, config.d) * 0.5), 3, 10);
-    const texture = createWindowTexture(
+    const seed = Math.abs(Math.round(config.x * 9 + config.z * 7));
+    const facade = createFacadeTextures(
       sceneRef,
       `building-tex-${config.x}-${config.z}`,
       {
-        base: style.base,
-        window: style.window,
+        baseTop: BABYLON.Color3.Lerp(style.base, new BABYLON.Color3(0.15, 0.15, 0.16), 0.1),
+        baseMid: style.base,
+        baseBottom: BABYLON.Color3.Lerp(style.base, new BABYLON.Color3(0.1, 0.1, 0.1), 0.2),
+        glassTop: BABYLON.Color3.Lerp(style.window, new BABYLON.Color3(0.2, 0.45, 0.6), 0.35),
+        glassBottom: BABYLON.Color3.Lerp(style.window, new BABYLON.Color3(0.05, 0.1, 0.15), 0.5),
+        frame: style.accent,
         accent: style.accent,
         rows,
         cols,
-        seed: Math.abs(Math.round(config.x * 9 + config.z * 7)),
+        seed,
       }
     );
     const material = new BABYLON.StandardMaterial(
       `buildingMat-${config.x}-${config.z}`,
       sceneRef
     );
-    material.diffuseTexture = texture;
-    material.specularColor = new BABYLON.Color3(0.15, 0.15, 0.16);
-    material.emissiveColor = new BABYLON.Color3(0.03, 0.03, 0.035);
+    material.diffuseTexture = facade.diffuse;
+    material.emissiveTexture = facade.emissive;
+    material.bumpTexture = facade.bump;
+    material.specularColor = new BABYLON.Color3(0.22, 0.22, 0.24);
+    material.specularPower = 64;
+    material.emissiveColor = new BABYLON.Color3(0.05, 0.05, 0.06);
     return material;
   }
 
@@ -1348,6 +1730,26 @@ export async function startGame() {
     unit.position.set(0, config.h * 0.5 + unitHeight * 0.5 + 0.6, 0);
     unit.material = roofMat;
     unit.parent = parent;
+
+    const ventCount = Math.max(2, Math.round((unitWidth + unitDepth) * 0.15));
+    for (let i = 0; i < ventCount; i += 1) {
+      const vent = BABYLON.MeshBuilder.CreateCylinder(
+        `${parent.name}-vent-${i}`,
+        { diameter: 0.7, height: 1.4 },
+        sceneRef
+      );
+      const offsetX =
+        (hash2d(config.x, config.z + i, 61) - 0.5) * unitWidth * 0.6;
+      const offsetZ =
+        (hash2d(config.z, config.x + i, 73) - 0.5) * unitDepth * 0.6;
+      vent.position.set(
+        offsetX,
+        config.h * 0.5 + unitHeight + 1.2,
+        offsetZ
+      );
+      vent.material = metalMat;
+      vent.parent = parent;
+    }
   }
 
   function addSideAnnex(sceneRef, parent, config, material) {
@@ -1368,6 +1770,48 @@ export async function startGame() {
     annex.position.set(side * offset, -config.h * 0.15, 0);
     annex.material = material;
     annex.parent = parent;
+  }
+
+  function addBuildingDetails(sceneRef, parent, config) {
+    const baseHeight = Math.max(1.5, config.h * 0.08);
+    const base = BABYLON.MeshBuilder.CreateBox(
+      `${parent.name}-base`,
+      {
+        width: config.w + 1.2,
+        height: baseHeight,
+        depth: config.d + 1.2,
+      },
+      sceneRef
+    );
+    base.position.set(0, -config.h * 0.5 - baseHeight * 0.5, 0);
+    base.material = trimMat;
+    base.parent = parent;
+
+    const parapet = BABYLON.MeshBuilder.CreateBox(
+      `${parent.name}-parapet`,
+      {
+        width: config.w + 0.8,
+        height: 0.8,
+        depth: config.d + 0.8,
+      },
+      sceneRef
+    );
+    parapet.position.set(0, config.h * 0.5 + 0.4, 0);
+    parapet.material = roofMat;
+    parapet.parent = parent;
+
+    const band = BABYLON.MeshBuilder.CreateBox(
+      `${parent.name}-band`,
+      {
+        width: config.w * 0.9,
+        height: config.h * 0.18,
+        depth: 0.4,
+      },
+      sceneRef
+    );
+    band.position.set(0, config.h * 0.15, config.d * 0.5 + 0.25);
+    band.material = glassMat;
+    band.parent = parent;
   }
 
   const buildingConfigs = [
@@ -1396,6 +1840,7 @@ export async function startGame() {
     if (config.w >= 16 && config.d >= 14) {
       addSideAnnex(scene, building, config, buildingMat);
     }
+    addBuildingDetails(scene, building, config);
   }
 
   const runwayStart = new BABYLON.Vector3(
