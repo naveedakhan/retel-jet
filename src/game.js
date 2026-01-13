@@ -6,6 +6,33 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function computeWorldBounds(meshes) {
+  let min = new BABYLON.Vector3(
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY
+  );
+  let max = new BABYLON.Vector3(
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY
+  );
+
+  meshes.forEach((mesh) => {
+    mesh.computeWorldMatrix(true);
+    const bounds = mesh.getBoundingInfo().boundingBox;
+    min = BABYLON.Vector3.Minimize(min, bounds.minimumWorld);
+    max = BABYLON.Vector3.Maximize(max, bounds.maximumWorld);
+  });
+
+  return {
+    min,
+    max,
+    size: max.subtract(min),
+    center: min.add(max).scale(0.5),
+  };
+}
+
 function smoothStep(value) {
   return value * value * (3 - 2 * value);
 }
@@ -490,6 +517,391 @@ function createJetAudio(scene, jet) {
   return { update, setPaused };
 }
 
+function requestScenarioSelection() {
+  const existing = document.getElementById("scenarioModal");
+  if (existing) {
+    existing.remove();
+  }
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.id = "scenarioModal";
+    overlay.className = "scenario-modal";
+
+    const card = document.createElement("div");
+    card.className = "scenario-card";
+
+    const title = document.createElement("h2");
+    title.textContent = "Select Scenario";
+    card.appendChild(title);
+
+    const subtitle = document.createElement("p");
+    subtitle.textContent = "Choose the starting environment for your flight.";
+    card.appendChild(subtitle);
+
+    const options = document.createElement("div");
+    options.className = "scenario-options";
+
+    const makeOption = (id, label, description) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "scenario-option";
+      button.dataset.scenario = id;
+
+      const name = document.createElement("span");
+      name.className = "scenario-title";
+      name.textContent = label;
+
+      const detail = document.createElement("span");
+      detail.className = "scenario-desc";
+      detail.textContent = description;
+
+      button.appendChild(name);
+      button.appendChild(detail);
+      button.addEventListener("click", () => {
+        overlay.classList.add("hidden");
+        setTimeout(() => overlay.remove(), 150);
+        resolve(id);
+      });
+      return button;
+    };
+
+    options.appendChild(
+      makeOption(
+        "basic",
+        "Basic",
+        "Classic runway, apron, buildings, and city blocks."
+      )
+    );
+    options.appendChild(
+      makeOption(
+        "airport",
+        "Airport",
+        "Load the detailed airport model with a flatter terrain."
+      )
+    );
+    options.appendChild(
+      makeOption(
+        "carrier",
+        "Carrier",
+        "Sparse green seas with an anchored aircraft carrier."
+      )
+    );
+    card.appendChild(options);
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+  });
+}
+
+function getScenarioConfig(scenarioId) {
+  if (scenarioId === "airport") {
+    return {
+      id: "airport",
+      useAirportModel: true,
+      airportTargetLength: 320,
+      landOverrides: {
+        hillHeight: 4,
+        mountainHeight: 45,
+        flattenCenterRadius: 1000,
+      },
+      maskOverrides: {
+        centerRadius: 1400,
+        largeThreshold: 0.54,
+        smallThreshold: 0.6,
+        coastCut: 0.25,
+        shoreStart: 0.26,
+        shoreWidth: 0.18,
+      },
+    };
+  }
+
+  if (scenarioId === "carrier") {
+    return {
+      id: "carrier",
+      useCarrierModel: true,
+      carrierLaunchEnd: "min",
+      carrierTargetLength: 330,
+      oceanSize: 6000,
+      oceanColor: new BABYLON.Color3(0.08, 0.4, 0.28),
+      landOverrides: {
+        size: 6000,
+        hillHeight: 3,
+        mountainHeight: 22,
+        flattenCenterRadius: 0,
+      },
+      maskOverrides: {
+        islandScaleLarge: 1500,
+        islandScaleSmall: 800,
+        largeThreshold: 0.64,
+        largeFalloff: 0.18,
+        smallThreshold: 0.72,
+        smallFalloff: 0.2,
+        smallWeight: 0.35,
+        coastScale: 320,
+        coastThreshold: 0.52,
+        coastFalloff: 0.25,
+        coastCut: 0.55,
+        centerRadius: 0,
+        shoreStart: 0.22,
+        shoreWidth: 0.1,
+        baseHeight: 1.2,
+        seaFloorHeight: -1.8,
+      },
+    };
+  }
+
+  return {
+    id: "basic",
+    useAirportModel: false,
+  };
+}
+
+async function loadAirportModel(scene, targetLength) {
+  const root = new BABYLON.TransformNode("airportRoot", scene);
+  root.rotationQuaternion = BABYLON.Quaternion.Identity();
+
+  const result = await BABYLON.SceneLoader.ImportMeshAsync(
+    "",
+    "/",
+    "airport.glb",
+    scene
+  );
+  const importedRoot = result.meshes[0];
+  importedRoot.parent = root;
+
+  const renderMeshes = result.meshes.filter(
+    (mesh) => mesh.getTotalVertices && mesh.getTotalVertices() > 0
+  );
+  let bounds = computeWorldBounds(renderMeshes);
+  const lengthAxis = Math.max(bounds.size.x, bounds.size.z);
+  if (lengthAxis > 0) {
+    const scale = targetLength / lengthAxis;
+    root.scaling.setAll(scale);
+    bounds = computeWorldBounds(renderMeshes);
+  }
+
+  const centerLocal = bounds.center.subtract(root.position);
+  root.position.subtractInPlace(centerLocal);
+
+  bounds = computeWorldBounds(renderMeshes);
+  root.position.y += 1 - bounds.min.y;
+  bounds = computeWorldBounds(renderMeshes);
+
+  const isZAxis = bounds.size.z >= bounds.size.x;
+  const axisMin = isZAxis ? bounds.min.z : bounds.min.x;
+  const axisLength = isZAxis ? bounds.size.z : bounds.size.x;
+  const offset = Math.max(20, axisLength * 0.12);
+  const startPosition = new BABYLON.Vector3(
+    bounds.center.x,
+    2,
+    bounds.center.z
+  );
+  if (isZAxis) {
+    startPosition.z = axisMin + offset;
+  } else {
+    startPosition.x = axisMin + offset;
+  }
+
+  return { root, bounds, startPosition };
+}
+
+async function loadCarrierModel(scene, targetLength, oceanY, launchEnd) {
+  const root = new BABYLON.TransformNode("carrierRoot", scene);
+  root.rotationQuaternion = BABYLON.Quaternion.Identity();
+
+  const result = await BABYLON.SceneLoader.ImportMeshAsync(
+    "",
+    "/",
+    "gerald_r_ford_aircraft_carrier.glb",
+    scene
+  );
+  const importedRoot = result.meshes[0];
+  importedRoot.parent = root;
+
+  const renderMeshes = result.meshes.filter(
+    (mesh) => mesh.getTotalVertices && mesh.getTotalVertices() > 0
+  );
+  renderMeshes.forEach((mesh) => {
+    mesh.isPickable = true;
+  });
+  let bounds = computeWorldBounds(renderMeshes);
+  const lengthAxis = Math.max(bounds.size.x, bounds.size.z);
+  if (lengthAxis > 0) {
+    const scale = targetLength / lengthAxis;
+    root.scaling.setAll(scale);
+    bounds = computeWorldBounds(renderMeshes);
+  }
+
+  const centerLocal = bounds.center.subtract(root.position);
+  root.position.subtractInPlace(centerLocal);
+  bounds = computeWorldBounds(renderMeshes);
+
+  const hullHeight = bounds.size.y;
+  const waterline = bounds.min.y + hullHeight * 0.3;
+  root.position.y += oceanY - waterline;
+  bounds = computeWorldBounds(renderMeshes);
+
+  const isZAxis = bounds.size.z >= bounds.size.x;
+  const launchPoint = findCarrierLaunchPoint(
+    scene,
+    renderMeshes,
+    bounds,
+    isZAxis,
+    launchEnd
+  );
+  const launchYaw = computeCarrierLaunchYaw(isZAxis, launchEnd);
+  const startPosition = launchPoint
+    ? launchPoint.point.add(new BABYLON.Vector3(0, 0.6, 0))
+    : new BABYLON.Vector3(bounds.center.x, bounds.max.y + 1, bounds.center.z);
+
+  const deckHeightAtStart = launchPoint?.point.y ?? null;
+  const fallbackDeckHeight = sampleCarrierDeckHeight(
+    scene,
+    renderMeshes,
+    bounds,
+    isZAxis
+  );
+  const deckHeight =
+    deckHeightAtStart ??
+    fallbackDeckHeight ??
+    bounds.max.y - bounds.size.y * 0.05;
+  startPosition.y = deckHeight + 0.6;
+
+  return {
+    root,
+    bounds,
+    startPosition,
+    deckHeight,
+    renderMeshes,
+    isZAxis,
+    launchYaw,
+  };
+}
+
+function sampleCarrierDeckHeight(scene, renderMeshes, bounds, isZAxis) {
+  const meshSet = new Set(renderMeshes);
+  const length = isZAxis ? bounds.size.z : bounds.size.x;
+  const width = isZAxis ? bounds.size.x : bounds.size.z;
+  const centerX = bounds.center.x;
+  const centerZ = bounds.center.z;
+  const rayStartY = bounds.max.y + 50;
+
+  const samples = [];
+  const lengthSteps = 9;
+  const widthSteps = 5;
+  for (let i = 0; i < lengthSteps; i += 1) {
+    const u = -0.45 + (0.9 * i) / (lengthSteps - 1);
+    for (let j = 0; j < widthSteps; j += 1) {
+      const v = -0.35 + (0.7 * j) / (widthSteps - 1);
+      const x = isZAxis ? centerX + v * width : centerX + u * length;
+      const z = isZAxis ? centerZ + u * length : centerZ + v * width;
+      const origin = new BABYLON.Vector3(x, rayStartY, z);
+      const ray = new BABYLON.Ray(origin, new BABYLON.Vector3(0, -1, 0), 200);
+      const hit = scene.pickWithRay(ray, (mesh) => meshSet.has(mesh));
+      if (hit && hit.pickedPoint) {
+        const normal = hit.getNormal && hit.getNormal(true);
+        if (!normal || normal.y > 0.35) {
+          samples.push(hit.pickedPoint.y);
+        }
+      }
+    }
+  }
+
+  if (samples.length === 0) {
+    return bounds.min.y + bounds.size.y * 0.72;
+  }
+
+  samples.sort((a, b) => a - b);
+  return samples[Math.floor(samples.length * 0.5)];
+}
+
+function findCarrierLaunchPoint(scene, renderMeshes, bounds, isZAxis, launchEnd) {
+  const meshSet = new Set(renderMeshes);
+  const axisLength = isZAxis ? bounds.size.z : bounds.size.x;
+  const width = isZAxis ? bounds.size.x : bounds.size.z;
+  const axisMax = isZAxis ? bounds.max.z : bounds.max.x;
+  const axisMin = isZAxis ? bounds.min.z : bounds.min.x;
+  const centerX = bounds.center.x;
+  const centerZ = bounds.center.z;
+  const endSpan = Math.max(20, axisLength * 0.12);
+  const widthSpan = Math.max(12, width * 0.45);
+  const rayStartY = bounds.max.y + 80;
+  const axisSteps = 7;
+  const widthSteps = 9;
+
+  let best = null;
+
+  const useMinEnd = launchEnd === "min";
+  for (let i = 0; i < axisSteps; i += 1) {
+    const t = i / (axisSteps - 1);
+    const axisCoord = useMinEnd
+      ? axisMin + t * endSpan
+      : axisMax - t * endSpan;
+    for (let j = 0; j < widthSteps; j += 1) {
+      const w = j / (widthSteps - 1) - 0.5;
+      const offset = w * widthSpan;
+      const x = isZAxis ? centerX + offset : axisCoord;
+      const z = isZAxis ? axisCoord : centerZ + offset;
+      const origin = new BABYLON.Vector3(x, rayStartY, z);
+      const ray = new BABYLON.Ray(origin, new BABYLON.Vector3(0, -1, 0), 200);
+      const hit = scene.pickWithRay(ray, (mesh) => meshSet.has(mesh));
+      if (!hit || !hit.pickedPoint) {
+        continue;
+      }
+      const normal = hit.getNormal && hit.getNormal(true);
+      if (normal && normal.y <= 0.45) {
+        continue;
+      }
+      const score = axisCoord * 2 - Math.abs(offset);
+      if (!best || score > best.score) {
+        best = {
+          point: hit.pickedPoint.clone(),
+          score,
+        };
+      }
+    }
+  }
+
+  return best;
+}
+
+function computeCarrierLaunchYaw(isZAxis, launchEnd) {
+  const useMinEnd = launchEnd === "min";
+  if (isZAxis) {
+    return useMinEnd ? 0 : Math.PI;
+  }
+  return useMinEnd ? Math.PI / 2 : -Math.PI / 2;
+}
+
+function pickCarrierDeckHeightAt(scene, renderMeshes, bounds, x, z) {
+  const meshSet = new Set(renderMeshes);
+  const rayStartY = bounds.max.y + 80;
+  const span = Math.min(bounds.size.x, bounds.size.z) * 0.08;
+  const offsets = [-span, -span * 0.5, 0, span * 0.5, span];
+  let best = null;
+
+  for (const dx of offsets) {
+    for (const dz of offsets) {
+      const origin = new BABYLON.Vector3(x + dx, rayStartY, z + dz);
+      const ray = new BABYLON.Ray(origin, new BABYLON.Vector3(0, -1, 0), 200);
+      const hit = scene.pickWithRay(ray, (mesh) => meshSet.has(mesh));
+      if (!hit || !hit.pickedPoint) {
+        continue;
+      }
+      const normal = hit.getNormal && hit.getNormal(true);
+      if (normal && normal.y <= 0.45) {
+        continue;
+      }
+      if (best === null || hit.pickedPoint.y > best) {
+        best = hit.pickedPoint.y;
+      }
+    }
+  }
+
+  return best;
+}
+
 function createInputManager() {
   const pressed = new Set();
   const input = {
@@ -777,6 +1189,9 @@ function createInputManager() {
 }
 
 export async function startGame() {
+  const scenarioId = await requestScenarioSelection();
+  const scenario = getScenarioConfig(scenarioId);
+
   const canvas = document.getElementById("renderCanvas");
   const engine = new BABYLON.Engine(canvas, true);
   const scene = new BABYLON.Scene(engine);
@@ -815,6 +1230,7 @@ export async function startGame() {
     hillHeight: 8,
     mountainHeight: 80,
     flattenCenterRadius: 350,
+    ...(scenario.landOverrides || {}),
   };
 
   const landMaskOptions = {
@@ -842,6 +1258,7 @@ export async function startGame() {
     baseHeight: 2,
     seaFloorHeight: -6,
     flattenCenterRadius: landConfig.flattenCenterRadius,
+    ...(scenario.maskOverrides || {}),
   };
 
   const landmass = BABYLON.MeshBuilder.CreateGround(
@@ -858,12 +1275,16 @@ export async function startGame() {
 
   const ocean = BABYLON.MeshBuilder.CreateGround(
     "ocean",
-    { width: 2200, height: 2200 },
+    {
+      width: scenario.oceanSize || 2200,
+      height: scenario.oceanSize || 2200,
+    },
     scene
   );
   ocean.position.y = landMaskOptions.seaFloorHeight + 0.2;
   const oceanMat = new BABYLON.StandardMaterial("oceanMat", scene);
-  oceanMat.diffuseColor = new BABYLON.Color3(0.1, 0.3, 0.6);
+  oceanMat.diffuseColor =
+    scenario.oceanColor || new BABYLON.Color3(0.1, 0.3, 0.6);
   oceanMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.2);
   ocean.material = oceanMat;
 
@@ -887,10 +1308,18 @@ export async function startGame() {
     }
   }
 
-  const runwayLength = 260;
-  const runwayWidth = 40;
-  
-  // Create large concrete apron/taxiway area around the runway
+  let runwayLength = 260;
+  let runwayWidth = 40;
+  let airportStart = null;
+  let carrierStart = null;
+  let carrierDeckHeight = null;
+  let carrierMeshes = null;
+  let carrierBounds = null;
+  let carrierDeckSampler = null;
+  let carrierLaunchYaw = null;
+
+  if (!scenario.useAirportModel && !scenario.useCarrierModel) {
+    // Create large concrete apron/taxiway area around the runway
   const apronSize = 200;
   const apron = BABYLON.MeshBuilder.CreateGround(
     "apron",
@@ -1825,32 +2254,83 @@ export async function startGame() {
     { x: 60, z: 50, w: 18, h: 12, d: 15 },
   ];
 
-  for (const config of buildingConfigs) {
-    const buildingMat = createBuildingMaterial(scene, config);
-    const building = BABYLON.MeshBuilder.CreateBox(
-      `building-${config.x}-${config.z}`,
-      { width: config.w, height: config.h, depth: config.d },
-      scene
-    );
-    building.position.set(config.x, config.h / 2 + 1, config.z);
-    building.material = buildingMat;
-    if (config.h >= 12) {
-      addRooftopUnit(scene, building, config);
+    for (const config of buildingConfigs) {
+      const buildingMat = createBuildingMaterial(scene, config);
+      const building = BABYLON.MeshBuilder.CreateBox(
+        `building-${config.x}-${config.z}`,
+        { width: config.w, height: config.h, depth: config.d },
+        scene
+      );
+      building.position.set(config.x, config.h / 2 + 1, config.z);
+      building.material = buildingMat;
+      if (config.h >= 12) {
+        addRooftopUnit(scene, building, config);
+      }
+      if (config.w >= 16 && config.d >= 14) {
+        addSideAnnex(scene, building, config, buildingMat);
+      }
+      addBuildingDetails(scene, building, config);
     }
-    if (config.w >= 16 && config.d >= 14) {
-      addSideAnnex(scene, building, config, buildingMat);
-    }
-    addBuildingDetails(scene, building, config);
   }
 
-  const runwayStart = new BABYLON.Vector3(
-    0,
-    2,
-    -runwayLength / 2 + 6
-  );
+  if (scenario.useAirportModel) {
+    const airportData = await loadAirportModel(
+      scene,
+      scenario.airportTargetLength || 320
+    );
+    airportStart = airportData.startPosition;
+  }
+
+  if (scenario.useCarrierModel) {
+    const carrierData = await loadCarrierModel(
+      scene,
+      scenario.carrierTargetLength || 330,
+      ocean.position.y,
+      scenario.carrierLaunchEnd
+    );
+    carrierStart = carrierData.startPosition;
+    carrierDeckHeight = carrierData.deckHeight;
+    carrierMeshes = carrierData.renderMeshes;
+    carrierBounds = carrierData.bounds;
+    carrierLaunchYaw = carrierData.launchYaw;
+    const carrierAxisIsZ = carrierData.isZAxis;
+    carrierDeckSampler = (x, z) => {
+      const direct = pickCarrierDeckHeightAt(
+        scene,
+        carrierMeshes,
+        carrierBounds,
+        x,
+        z
+      );
+      if (direct !== null) {
+        return direct;
+      }
+      return sampleCarrierDeckHeight(
+        scene,
+        carrierMeshes,
+        carrierBounds,
+        carrierAxisIsZ
+      );
+    };
+  }
+
+  const runwayStart =
+    carrierStart ||
+    airportStart ||
+    new BABYLON.Vector3(0, 2, -runwayLength / 2 + 6);
 
   const { mesh: jet, controller } = await createJet(scene, runwayStart);
   controller.reset();
+  if (carrierLaunchYaw !== null) {
+    jet.rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(
+      carrierLaunchYaw,
+      0,
+      0
+    );
+  }
+  if (carrierDeckHeight !== null) {
+    controller.minAltitude = carrierDeckHeight + 0.3;
+  }
   const cockpit = createCockpit(scene, jet);
   const jetAudio = createJetAudio(scene, jet);
 
@@ -1967,6 +2447,18 @@ export async function startGame() {
 
       if (inputManager.consumeOrbitToggle()) {
         orbitEnabled = !orbitEnabled;
+      }
+    }
+
+    if (carrierDeckSampler) {
+      const deckHeight = carrierDeckSampler(jet.position.x, jet.position.z);
+      if (deckHeight !== null) {
+        const minAltitude = deckHeight + 0.3;
+        controller.minAltitude = Math.max(controller.minAltitude, minAltitude);
+        if (jet.position.y < minAltitude) {
+          jet.position.y = minAltitude;
+          controller.velocity.y = Math.max(0, controller.velocity.y);
+        }
       }
     }
 

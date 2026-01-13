@@ -19,6 +19,78 @@ body {
   background: #6fb7ff;
 }
 
+.scenario-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7, 14, 22, 0.6);
+  z-index: 2000;
+  backdrop-filter: blur(6px);
+}
+
+.scenario-modal.hidden {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.scenario-card {
+  background: #f5f7fb;
+  border-radius: 18px;
+  padding: 28px;
+  width: min(520px, 92vw);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(11, 27, 43, 0.12);
+}
+
+.scenario-card h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  color: #0b1b2b;
+}
+
+.scenario-card p {
+  margin: 0 0 20px;
+  color: #364a5e;
+  font-size: 14px;
+}
+
+.scenario-options {
+  display: grid;
+  gap: 12px;
+}
+
+.scenario-option {
+  text-align: left;
+  border: 1px solid rgba(11, 27, 43, 0.15);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.scenario-option:hover {
+  transform: translateY(-2px);
+  border-color: rgba(11, 27, 43, 0.3);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+}
+
+.scenario-title {
+  display: block;
+  font-weight: 700;
+  color: #0b1b2b;
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+.scenario-desc {
+  display: block;
+  color: #4c5d6e;
+  font-size: 13px;
+}
+
 #renderCanvas {
   width: 100vw;
   height: 100vh;
