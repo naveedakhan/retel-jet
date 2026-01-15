@@ -458,7 +458,7 @@ function createJetAudio(scene, jet) {
     const downStrength = clamp((-deltaRate - 0.05) / 0.55, 0, 1);
     const steeringStrength = Math.max(upStrength, downStrength);
 
-    const baseLoopVolume = BABYLON.Scalar.Lerp(0.05, 0.9, throttle);
+    const baseLoopVolume = BABYLON.Scalar.Lerp(0.0, 0.9, throttle);
     const targetLoopVolume = baseLoopVolume * (1 - 0.4 * steeringStrength);
     const targetLoopRate = BABYLON.Scalar.Lerp(0.85, 1.45, throttle);
 
@@ -742,6 +742,14 @@ async function loadCarrierModel(scene, targetLength, oceanY, launchEnd) {
   root.position.y += oceanY - waterline;
   bounds = computeWorldBounds(renderMeshes);
 
+  console.log("[CARRIER] After positioning:");
+  console.log("  oceanY:", oceanY);
+  console.log("  hullHeight:", hullHeight);
+  console.log("  waterline:", waterline);
+  console.log("  bounds.min.y:", bounds.min.y);
+  console.log("  bounds.max.y:", bounds.max.y);
+  console.log("  bounds.size.y:", bounds.size.y);
+
   const isZAxis = bounds.size.z >= bounds.size.x;
   const launchPoint = findCarrierLaunchPoint(
     scene,
@@ -762,11 +770,24 @@ async function loadCarrierModel(scene, targetLength, oceanY, launchEnd) {
     bounds,
     isZAxis
   );
+  // The deck is typically 70-75% up from the bottom of the carrier model
+  // Use the sampled height if available, otherwise estimate based on model height
   const deckHeight =
     deckHeightAtStart ??
     fallbackDeckHeight ??
-    bounds.max.y - bounds.size.y * 0.05;
+    bounds.min.y + bounds.size.y * 0.72;
   startPosition.y = deckHeight + 0.6;
+
+  console.log("[CARRIER] Deck height detection:");
+  console.log("  launchPoint found:", !!launchPoint);
+  console.log("  deckHeightAtStart:", deckHeightAtStart);
+  console.log("  fallbackDeckHeight:", fallbackDeckHeight);
+  console.log("  bounds.min.y:", bounds.min.y);
+  console.log("  bounds.max.y:", bounds.max.y);
+  console.log("  bounds.size.y:", bounds.size.y);
+  console.log("  estimated deck (min + 72%):", bounds.min.y + bounds.size.y * 0.72);
+  console.log("  final deckHeight:", deckHeight);
+  console.log("  startPosition.y:", startPosition.y);
 
   return {
     root,
@@ -809,11 +830,16 @@ function sampleCarrierDeckHeight(scene, renderMeshes, bounds, isZAxis) {
   }
 
   if (samples.length === 0) {
+    console.log("[CARRIER] sampleCarrierDeckHeight: No raycast hits found, using fallback");
     return bounds.min.y + bounds.size.y * 0.72;
   }
 
+  console.log("[CARRIER] sampleCarrierDeckHeight: Found", samples.length, "deck samples");
   samples.sort((a, b) => a - b);
-  return samples[Math.floor(samples.length * 0.5)];
+  const medianHeight = samples[Math.floor(samples.length * 0.5)];
+  console.log("[CARRIER] Deck samples (sorted):", samples);
+  console.log("[CARRIER] Median deck height:", medianHeight);
+  return medianHeight;
 }
 
 function findCarrierLaunchPoint(scene, renderMeshes, bounds, isZAxis, launchEnd) {
@@ -1313,6 +1339,8 @@ export async function startGame() {
   let airportStart = null;
   let carrierStart = null;
   let carrierDeckHeight = null;
+  let sea_level = null;
+  let deck_level = null;
   let carrierMeshes = null;
   let carrierBounds = null;
   let carrierDeckSampler = null;
@@ -2290,27 +2318,32 @@ export async function startGame() {
     );
     carrierStart = carrierData.startPosition;
     carrierDeckHeight = carrierData.deckHeight;
+    sea_level = ocean.position.y;
+    deck_level = carrierDeckHeight;
     carrierMeshes = carrierData.renderMeshes;
     carrierBounds = carrierData.bounds;
     carrierLaunchYaw = carrierData.launchYaw;
     const carrierAxisIsZ = carrierData.isZAxis;
+    
+    // DEBUG: Log carrier positioning
+    console.log("=== CARRIER POSITIONING DEBUG ===");
+    console.log("Ocean position.y:", ocean.position.y);
+    console.log("Sea level:", sea_level);
+    console.log("Deck height:", carrierDeckHeight);
+    console.log("Deck level:", deck_level);
+    console.log("Carrier bounds min.y:", carrierBounds.min.y);
+    console.log("Carrier bounds max.y:", carrierBounds.max.y);
+    console.log("Carrier bounds size.y:", carrierBounds.size.y);
+    console.log("Carrier start position:", carrierStart);
+    console.log("Carrier start position.y:", carrierStart.y);
+    console.log("Height of deck above sea level:", carrierDeckHeight - sea_level);
+    console.log("Height of jet start above sea level:", carrierStart.y - sea_level);
+    console.log("Height of jet start above deck:", carrierStart.y - carrierDeckHeight);
+    console.log("===================================");
     carrierDeckSampler = (x, z) => {
-      const direct = pickCarrierDeckHeightAt(
-        scene,
-        carrierMeshes,
-        carrierBounds,
-        x,
-        z
-      );
-      if (direct !== null) {
-        return direct;
-      }
-      return sampleCarrierDeckHeight(
-        scene,
-        carrierMeshes,
-        carrierBounds,
-        carrierAxisIsZ
-      );
+      // Simply return the calculated deck height - it's consistent and reliable
+      // No need for expensive raycasting every frame
+      return carrierDeckHeight;
     };
   }
 
@@ -2320,7 +2353,21 @@ export async function startGame() {
     new BABYLON.Vector3(0, 2, -runwayLength / 2 + 6);
 
   const { mesh: jet, controller } = await createJet(scene, runwayStart);
+  
+  // Set minAltitude BEFORE reset to prevent the jet from sinking
+  if (carrierDeckHeight !== null) {
+    controller.minAltitude = carrierDeckHeight + 0.3;
+  }
+  
   controller.reset();
+  
+  // CRITICAL: Position jet AT the floor level (not above it) so it's grounded from startup
+  // This prevents any falling/sinking behavior and allows brakes to work
+  if (carrierDeckHeight !== null) {
+    jet.position.y = controller.minAltitude;
+    controller.velocity.y = 0;
+  }
+  
   if (carrierLaunchYaw !== null) {
     jet.rotationQuaternion = BABYLON.Quaternion.RotationYawPitchRoll(
       carrierLaunchYaw,
@@ -2328,9 +2375,20 @@ export async function startGame() {
       0
     );
   }
-  if (carrierDeckHeight !== null) {
-    controller.minAltitude = carrierDeckHeight + 0.3;
+  
+  // DEBUG: Log jet positioning
+  console.log("=== JET POSITIONING DEBUG ===");
+  console.log("runwayStart:", runwayStart);
+  console.log("jet.position.y (initial):", jet.position.y);
+  console.log("sea_level:", sea_level);
+  console.log("deck_level:", deck_level);
+  if (sea_level !== null && deck_level !== null) {
+    console.log("Altitude shown to player (jet.position.y):", jet.position.y);
+    console.log("Height above sea level (actual):", jet.position.y - sea_level);
+    console.log("Height above deck level:", jet.position.y - deck_level);
+    console.log("PROBLEM: Altitude display is absolute world Y, not relative to sea level!");
   }
+  console.log("=============================");
   const cockpit = createCockpit(scene, jet);
   const jetAudio = createJetAudio(scene, jet);
 
@@ -2402,7 +2460,9 @@ export async function startGame() {
     }
   }
 
+  let frameCount = 0;
   engine.runRenderLoop(() => {
+    frameCount++;
     const dt = engine.getDeltaTime() / 1000;
     const clampedDt = clamp(dt, 0, 0.05);
 
@@ -2456,8 +2516,14 @@ export async function startGame() {
         const minAltitude = deckHeight + 0.3;
         controller.minAltitude = Math.max(controller.minAltitude, minAltitude);
         if (jet.position.y < minAltitude) {
+          console.log("[FRAME] Jet below deck!");
+          console.log("  jet.position.y:", jet.position.y);
+          console.log("  deckHeight:", deckHeight);
+          console.log("  minAltitude:", minAltitude);
+          console.log("  velocity.y before:", controller.velocity.y);
           jet.position.y = minAltitude;
           controller.velocity.y = Math.max(0, controller.velocity.y);
+          console.log("  velocity.y after:", controller.velocity.y);
         }
       }
     }
@@ -2469,6 +2535,23 @@ export async function startGame() {
         brakeEngaged,
         autoLevelEnabled
       );
+    }
+
+    // CRITICAL: Enforce floor constraint AFTER physics update
+    // This ensures the jet never sinks below the deck
+    if (carrierDeckSampler) {
+      const deckHeight = carrierDeckSampler(jet.position.x, jet.position.z);
+      if (deckHeight !== null) {
+        const minAltitude = deckHeight + 0.3;
+        if (jet.position.y < minAltitude) {
+          if (frameCount < 10) {
+            console.log("[AFTER_PHYSICS] Jet below deck - correcting");
+            console.log("  jet.position.y:", jet.position.y, "minAltitude:", minAltitude);
+          }
+          jet.position.y = minAltitude;
+          controller.velocity.y = Math.max(0, controller.velocity.y);
+        }
+      }
     }
 
     // Update cockpit stick position based on input
@@ -2483,7 +2566,7 @@ export async function startGame() {
 
     hud.update({
       speed: controller.speed,
-      altitude: jet.position.y,
+      altitude: sea_level !== null ? jet.position.y - sea_level : jet.position.y,
       throttle: controller.throttle,
       position: jet.position,
       landMap: minimapLand,

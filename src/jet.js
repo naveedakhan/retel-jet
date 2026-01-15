@@ -156,12 +156,19 @@ class JetController {
     const lift = up.scale(this.liftCoeff * speed * speed * liftScale);
 
     const gravity = new BABYLON.Vector3(0, -this.gravity, 0);
+    
+    // Normal force from the deck: when close to ground, apply upward force to support the plane
+    const nearGroundThreshold = this.minAltitude + 1.5;
+    const normalForce = this.mesh.position.y <= nearGroundThreshold
+      ? new BABYLON.Vector3(0, this.gravity, 0)  // Support force from deck
+      : new BABYLON.Vector3(0, 0, 0);
 
     const acceleration = thrust
       .add(lift)
       .addInPlace(drag)
       .addInPlace(turnDrag)
-      .addInPlace(gravity);
+      .addInPlace(gravity)
+      .addInPlace(normalForce);
 
     this.velocity.addInPlace(acceleration.scale(dt));
 
@@ -171,6 +178,7 @@ class JetController {
     }
     this.mesh.position.addInPlace(this.velocity.scale(dt));
 
+    // Floor constraint: prevent jet from going below minimum altitude
     if (this.mesh.position.y < this.minAltitude) {
       this.mesh.position.y = this.minAltitude;
       if (this.velocity.y < 0) {
